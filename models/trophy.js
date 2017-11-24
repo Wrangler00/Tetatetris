@@ -1,0 +1,29 @@
+var mongoose = require('mongoose');
+
+var trophy_Schema = mongoose.Schema({
+	  trophy_id : String,
+	  name: String,
+	  rank : String,
+	  trophies :  Number,
+	  Level: Number,
+	  token:String
+});
+
+var Troph = module.exports = mongoose.model('Troph', trophy_Schema);
+
+module.exports.getUserById = function(id, callback){
+	Troph.findById(id, callback);
+}
+
+module.exports.getUserBydbid = function(username, callback){
+	var query = {'trophy_id': username};
+	Troph.findOne(query,callback);
+}
+
+module.exports.getUserByTrophy = function(callback){
+	Troph.find({}).sort({"trophies":-1}).exec(callback);
+}
+
+module.exports.createUser = function(newUser, callback){
+	newUser.save(callback);
+}

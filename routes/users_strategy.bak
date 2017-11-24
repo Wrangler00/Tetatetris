@@ -1,0 +1,341 @@
+/*var bcrypt = require('bcryptjs');
+var passport = require('passport');
+var util = require('util');
+  , Strategy = require('passport-strategy');
+var LocalStrategy = require('passport-local').Strategy;
+var FacebookStrategy = require('passport-facebook').Strategy;
+var GoogleStrategy = require('passport-google-oauth').OAuth2Strategy;
+var TwitterStrategy = require('passport-twitter').Strategy;*/
+//var session = require('express-session');
+
+// Express Session
+
+/*app.use(session({
+    secret: 'secret',
+    saveUninitialized: true,
+    resave: true,
+}));
+
+var crypto;
+
+try {
+  crypto = require('crypto');
+} catch (err) {
+  console.log('crypto support is disabled!');
+}*/
+// var CustomStrategy = require('passport-custom').Strategy;
+
+
+ /*
+//Facebook Strategy***************Starts Here Sna
+passport.use(new FacebookStrategy({
+	    clientID: configAuth.facebookAuth.clientID,
+	    clientSecret: configAuth.facebookAuth.clientSecret,
+	    callbackURL: configAuth.facebookAuth.callbackURL
+	  },
+	  function(accessToken, refreshToken, profile, done) {
+	    	process.nextTick(function(){
+	    		User.findOne({'facebook.id': profile.id},function(err,user){
+	    			if(err)
+	    				return done(err);
+	    			if(user){
+	    				//session_id=user._id;
+						//url_parameter = "/?user_id="+session_id;
+	    				return done(null, user);
+	    			}
+	    			else {
+	    				var newUser = new User();
+	    				newUser.facebook.id = profile.id;
+	    				newUser.facebook.token = accessToken;
+	    				trophytable_id = newUser._id;
+	    				newUser.facebook.name = profile.displayName;
+	    				// newUser.facebook.email = profile.emails[0].value;
+						
+	    				newUser.save(function(err){
+	    					if(err)
+	    						throw err;
+	    					//session_id=newUser._id;
+							//url_parameter = "/?user_id="+session_id;
+	    					return done(null, newUser);
+	    				});
+						
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.name =profile.displayName;
+						newTrophy.trophies = 800;
+						newTrophy.rank = "Bronze";
+						newTrophy.Level = 1;
+						
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	    				console.log(profile);
+	    			}
+	    		});
+	    	});
+	    }
+	));
+// Facebook Strategy***************Ends Here Sna
+
+passport.use(new GoogleStrategy({
+	    clientID: configAuth.googleAuth.clientID,
+	    clientSecret: configAuth.googleAuth.clientSecret,
+	    callbackURL: configAuth.googleAuth.callbackURL
+	  },
+	  function(accessToken, refreshToken,profile, done) {
+	    	process.nextTick(function(){
+	    		User.findOne({'google.id': profile.id}, function(err, user){
+	    			if(err)
+	    				return done(err);
+	    			if(user){
+	    				session_id=user._id;
+						url_parameter = "/?user_id="+session_id;
+	    				return done(null, user);
+	    			}
+	    			else {
+	    				var newUser = new User();
+	    				newUser.google.id = profile.id;
+	    				newUser.google.token = accessToken;
+	    				newUser.google.name = profile.displayName;
+	    				trophytable_id = newUser._id;
+	    				newUser.google.email = profile.emails[0].value;
+	    				newUser.save(function(err){
+	    					if(err)
+	    						throw err;
+	    					session_id=newUser._id;
+							url_parameter = "/?user_id="+session_id;
+	    					return done(null, newUser);
+	    				});
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.name =profile.displayName;
+						newTrophy.trophies = 800;
+						newTrophy.rank = "Bronze";
+						newTrophy.Level = 1;
+						
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	    				console.log(profile);
+	    			}
+	    		});
+	    	});
+	    }
+));
+
+passport.use(new TwitterStrategy({
+    consumerKey: configAuth.twitterAuth.consumerKey,
+    consumerSecret:configAuth.twitterAuth.consumerSecret,
+    callbackURL: configAuth.twitterAuth.callbackURL
+  }, 
+  
+  function(token, tokenSecret, profile, done) {
+    process.nextTick(function(){
+	    		User.findOne({'twitter.id': profile.id}, function(err, user){
+	    			if(err)
+	    				return done(err);
+	    			if(user){
+	    				session_id=user._id;
+						url_parameter = "/?user_id="+session_id;
+	    				return done(null, user);
+	    			}
+	    			else{
+	    				var newUser = new User();
+	    				newUser.twitter.id = profile.id;
+	    				newUser.twitter.name = profile.name;
+	    				newUser.twitter.username = profile.screen_name;
+	    				trophytable_id = newUser._id;
+	    				newUser.save(function(err){
+	    					if(err)
+	    						throw err;
+	    					session_id=newUser._id;
+							url_parameter = "/?user_id="+session_id;
+	    					return done(null, newUser);
+	    				});
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.trophies = 800;
+						newTrophy.rank = "Bronze";
+						newTrophy.name =profile.name;
+						newTrophy.Level = 1;
+						
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	    				console.log(profile);
+	    			}
+	    		});
+	    	});
+  }
+));*/
+/*
+passport.serializeUser(function(user, done) {
+	//console.log("Inside passport.serializeUser");
+	//console.log(user);
+	done(null, user.id);
+});
+
+passport.deserializeUser(function(id, done) {
+	//console.log("Inside passport.deserializeUser");
+	//console.log(id);
+	User.getUserById(id, function(err, user) {
+		done(err, user);
+	});
+});*/
+
+//the login form is submitted to the server via the post method
+/*router.post('/login',
+  passport.authenticate('local', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true}),
+  function(req, res) {
+	  res.redirect("/");
+});*/
+
+/*router.post('/guest',
+  passport.authenticate('guest', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true}),
+  function(req, res){
+	//console.log("Inside guest post re,rec function *******");
+	res.redirect("/");
+});*/
+
+
+/*router.get('/auth/facebook', passport.authenticate('facebook', {scope: ['email']}));
+
+router.get('/auth/facebook/callback',
+	  passport.authenticate('facebook', {successRedirect: url_parameter,
+	                                      failureRedirect: '/users/login' }),
+	  function(req, res) {
+		res.redirect(url_parameter);//passuser id here
+	  }
+);
+
+router.get('/auth/google', passport.authenticate('google', {scope: ['profile', 'email']}));
+
+router.get('/auth/google/callback',
+	  passport.authenticate('google', {successRedirect: url_parameter,
+	                                    failureRedirect: '/users/login' }),
+	  function(req, res) {
+		res.redirect(url_parameter);//passuer id here
+});
+
+router.get('/auth/twitter', passport.authenticate('twitter'));
+
+router.get('/auth/twitter/callback',
+  passport.authenticate('twitter', { successRedirect: url_parameter,
+                                     failureRedirect: '/users/login' }),
+  function(req, res) {
+    res.redirect(url_parameter);//passuser id here
+});*/
+
+
+/*router.get('/',ensureAuthenticated,function(req,res){
+	//console.log("Inside router get ensure authenticated--------------------");
+	if(isEmpty(req.session.passport)){
+		//console.log("isEmpty(req.session.passport)");
+		//console.log(req);
+		//console.log("------END----------");
+		//have to create new session
+		
+		//on progress
+		User.getUserBydbid(req.cookies.user_id, function(err, user){
+			if(err) throw err;
+			if(user){
+				console.log("-----------------vitamin c------------------");
+				if(!isEmpty(user.local)){
+					console.log("isEmpty(user.local)");
+					//passport.authenticate('local', {successRedirect:'/', failureRedirect:'/users/login',failureFlash: true});
+				}else if(!isEmpty(user.facebook)){
+						console.log("isEmpty(user.facebook)");
+						//passport.authenticate('facebook', {scope: ['email']});
+					}else if(!isEmpty(user.google)){
+							console.log("!isEmpty(user.google)");
+							//passport.authenticate('google', {successRedirect: url_parameter,failureRedirect: '/users/login' });
+						}else if(!isEmpty(user.twitter)){
+								console.log("isEmpty(user.twitter)");
+								//passport.authenticate('twitter', { successRedirect: url_parameter,failureRedirect: '/users/login' });
+							}else if(!isEmpty(user.guest)){
+									console.log("isEmpty(user.guest)");
+									//passport.authenticate('guest', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true});
+								}
+			}					
+			else console.log("*********some problem in finding getUserBydbid");
+		});
+	    res.render('loggedIn',{userid:req.cookies.user_id});
+	}
+	else{
+		//console.log(req.session.passport.user);
+		res.render('index',{userid:req.session.passport.user});
+	}
+});
+
+//user authentication
+function ensureAuthenticated(req, res, next){
+	if(req.isAuthenticated()){
+		return next();
+	} else {
+				if(isEmpty(req.cookies.user_id)){
+					console.log("user_id == undefined");
+					res.redirect('/users/login');
+				}
+				else{
+					 return next();
+				}
+			}	
+}*/
+
+/*passport.use(new LocalStrategy(
+  function(username,password,done) {
+	  	  
+	User.getUserByUsername(username, function(err,user){
+		if(err) throw err;
+	
+		if(!user){
+			return done(null, false, {message: 'Unknown User'});
+		}
+	
+		console.log("Inside user local strategy!!!!!!");
+		console.log(user);
+		
+		User.comparePassword(password, user.local.password, function(err, isMatch){
+			if(err) throw err;
+			console.log("Inside User.comparePassword--------------");
+			if(isMatch){
+				console.log("Inside if part of User.comparePassword-----------------");
+				return done(null,user);
+			} else {
+				console.log("Inside else part of User.comparePassword-----------------------");
+				return done(null, false, {message: 'Invalid password'});
+			}
+		});
+   });
+}));
+
+passport.use('loggedIn',new LocalStrategy(
+	function(password,done){
+		console.log("#########################Inside passport.use of loggedIn!!!!!!");
+		User.getUserBycookie(password,function(err,user){
+			if(err) throw err;
+			
+			if(user){
+				user.guest.name= user.guest.name;
+				user.save();
+				console.log("--------------user has been found-----------")
+				Trophy.getUserBydbid(user._id,function(err,user_temp){
+								if(err) throw err;
+								if(user_temp){
+									user_temp.name = user.guest.name;
+									user_temp.trophies = user.guest.trophies;
+									console.log("inside get User by Db id: "+user_temp);
+									user_temp.save();	
+								}
+								else{
+									console.log("some problem with updating guest user by db id!");
+								}
+							});
+				return done(null, user);
+			}
+			else{
+				console.log("-----------invalid user--------------");
+			}
+			return done(null, user);
+	});
+}));*/

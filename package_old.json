@@ -1,0 +1,37 @@
+{
+  "name": "loginapp",
+  "version": "1.0.0",
+  "description": "Simple authentication system",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Brad Traversy",
+  "license": "ISC",
+  "dependencies": {
+    "arpad": "^0.1.2",
+    "bcryptjs": "*",
+    "body-parser": "*",
+    "connect-flash": "*",
+    "cookie-parser": "^1.4.1",
+    "express": "*",
+    "express-handlebars": "*",
+    "express-messages": "*",
+    "express-session": "*",
+    "express-validator": "*",
+    "forever": "~0.15.2",
+    "mongodb": "*",
+    "mongoose": "*",
+    "nodemailer": "^2.4.2",
+    "passport": "*",
+    "passport-custom": "^1.0.5",
+    "passport-dummy": "0.0.1",
+    "passport-facebook": "^2.1.1",
+    "passport-google-oauth": "^1.0.0",
+    "passport-http": "*",
+    "passport-local": "*",
+    "passport-twitter": "^1.0.4",
+    "socket.io": "^2.0.3"
+  }
+}
+

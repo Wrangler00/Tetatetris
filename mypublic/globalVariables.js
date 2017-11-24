@@ -1,0 +1,74 @@
+//global variables
+	//constants
+	
+	const gridWidth=15,gridHeight=25;
+	const previewGridWidth=4,previewGridHeight=4;
+	const defaultBackgroundColor = "transparent";
+	
+	var keystatus = {'stopButton':false,'dropButton':false,'rotateButton':false,'rightButton':false,'leftButton':false};
+	
+	var canPlayGame = 1;
+	var canPlayMultiplayer = false;
+	var socket = io();
+	var nextPiece,nextColor;
+	var shapeType,shapeStage=0;
+	var isPause=0,isStopped = 0;
+	var xmilisec,level=0,diffLevel=1;
+	var trophy=0;
+	var gridMakingCompleted = false;
+	var anyColor;
+	var backgroundPropertyOfAllBlocks = [];
+	var backgroundPropertyOfAllBlocks_temp = [];
+	var backgroundPropertyOfAllBlocksOpponents = [];
+	var backgroundPropertyOfAllBlocks_temp_Opponents = [];
+	var multiplayers = {};
+	var backgroundPropertyOfNextBlocks = [];
+	var timeSinceStart = 0,timer;
+	var theKeySendVar;
+	var halloffame={};
+	var containerLoaded = false;
+	var troph,oppTroph;
+	var nameOfUser,oppNameOfUser;
+	var winTrophy;
+	var spectateScreenOn = false;
+	var onlinePlayers ={},YouCanPlayMultiplayer = false;
+	var onetimeDetails = false,oppSearchTimeoutVar;
+	var soundOn = true;
+	var graveyard=2,flag = 7;
+	var previousDate=9007199254740992;
+	var connectionReset;
+	var isCritical=false,isFinalTime=false;
+	var isRowAdded = 0;
+	//sounds
+	var gamePlaySound = new Audio("../sounds/gamePlayBackground.mp3");
+	gamePlaySound.addEventListener('ended', function() {
+			this.currentTime = 0;
+			this.play();
+		}, false);
+	
+	var rowCompletionSound = new Audio("../sounds/rowcomplete.mp3");
+	var gameLostSound = new Audio("../sounds/WinLoseorDraw.mp3");
+	var gameWinSound = new Audio("../sounds/WinLoseorDraw.mp3");
+	var buttonClick = new Audio("../sounds/buttonClick.mp3");
+	var buttonHover = new Audio("../sounds/mouseHover.mp3");
+	var specReplay = new Audio("../sounds/spectateNReplay.mp3");
+	specReplay.addEventListener('ended', function() {
+			this.currentTime = 0;
+			this.play();
+		}, false);
+	
+	var illegalSound = new Audio("../sounds/illegalSound.mp3");
+	
+	var searchOpp = new Audio("../sounds/searchWaiting.mp3");
+	searchOpp.addEventListener('ended', function() {
+			this.currentTime = 0;
+			this.play();
+		}, false);
+	
+	var buttonClick = new Audio("../sounds/buttonClick.mp3");
+	var buttonHover = new Audio("../sounds/mouseHover.mp3");
+	var specReplay = new Audio("../sounds/spectateNReplay.mp3");
+	
+	//for game show on spectate and replay screen
+	var currentPlayersOnSpectate = {};
+	var currentPlayersOnReplay = {};

@@ -1,0 +1,502 @@
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Tete Tetris</title>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, minimal-ui" />
+        <META NAME="ROBOTS" CONTENT="NOINDEX, NOFOLLOW">
+        <link rel="shortcut icon" href="../logo.png" />
+		
+		<!--My code -->
+		<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+		<script src="/socket.io/socket.io.js"></script>
+		
+		<script src="//code.jquery.com/jquery-1.10.2.min.js"></script>
+		
+		<script type="text/javascript" src="jquery.touchSwipe.min.js"></script>
+		
+		<!--Alertify-->
+		<script src="alertify.js-0.3.11/lib/alertify.min.js"></script>
+		<link rel="stylesheet" href="alertify.js-0.3.11/themes/alertify.core.css" />
+		<link rel="stylesheet" href="alertify.js-0.3.11/themes/alertify.default.css" />	
+		<link rel="stylesheet" href="alertify.js-0.3.11/themes/alertify.bootstrap.css" />	
+		<!--Alertify closed-->
+		
+		<!--myCode close-->
+		   
+		<link href="style.css" type="text/css" rel="stylesheet" />
+		<link rel="stylesheet" href="TetrisCssAnimation.css">
+		<script type="text/javascript" src="globalVariables.js"></script>
+		<script type="text/javascript" src="deviceDetect.js"></script>
+		<script type="text/javascript" src="tetrisSwipe.js"></script>
+        <script type="text/javascript" src="tetJavascript.js"></script>
+		
+		<script>
+		var cookie = getCookie("idOfUser");
+		//console.log("cookie:  "+cookie);
+		if(cookie == '' || cookie == null || cookie==undefined){
+			window.location = "/";
+		}
+		
+		window.onbeforeunload = function() {
+			return "Dude, are you sure you want to leave? Think of the kittens!";
+		}
+		
+		</script>
+</head>
+	<script>
+		var mainScreenSound="";
+		//assigning id to main screen audio
+		
+		mainScreenSound = new Audio("../sounds/RacingMenu.mp3");
+		mainScreenSound.id = "idOfMainScreenSound";
+		
+		mainScreenSound.addEventListener('ended', function() {
+			this.currentTime = 0.5;
+			this.play();
+		}, false);
+		mainScreenSound.play();
+		
+		//to set cookie
+		function setCookie(cname, cvalue, exdays) {
+			//alert("Cookie set on index");
+			var d = new Date();
+			if(exdays!=0)
+				d.setTime(d.getTime() + (exdays*24*60*60*1000));
+			var expires = "expires="+d.toUTCString();
+			document.cookie = cname + "=" + cvalue + "; " + expires;
+		}
+		
+		function getCookie(cname) {
+			var name = cname + "=";
+			var ca = document.cookie.split(';');
+			for(var i = 0; i < ca.length;i++) {
+				var c = ca[i];
+				while(c.charAt(0) == ' ') {
+					c = c.substring(1);
+				}
+				if (c.indexOf(name) == 0) {
+					return c.substring(name.length,c.length);
+				}
+			}
+			return "";
+		}
+		
+		function logOut(){
+			console.log("logout button clicked");
+			var cookie = getCookie("idOfUser");
+			var obj = jQuery.parseJSON(cookie);
+			$.ajax({
+					url:  '/users/logout',
+					data: {
+							db_id:obj.db_id
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function(res){
+						var obj = jQuery.parseJSON(res);
+						if(!obj.response){
+							console.log("error: "+obj.error);
+						}
+						setCookie("idOfUser",cookie,0);
+						window.location = "/";
+					},
+					error: function(){
+						console.log("error in logout!")
+					}
+				});
+		}
+		
+		var param1var = "{{ userid }}";
+		if(param1var!=null &&  param1var!=''){
+			setCookie("idOfUser", param1var, 365);
+			if(window.location.href=="localhost:/user/guest"){
+				window.location = "localhost:/";
+			}
+		}	
+	</script>
+	
+	<!--To prevent pull to refresh code starts here-->
+	<script type="text/javascript">
+     
+		window.addEventListener("touchmove", function(event) 
+		{ if (!event.target.classList.contains('scrollable')) { // no more scrolling 
+		event.preventDefault(); } }, false);
+	 
+		window.addEventListener('load', function() {
+          var maybePreventPullToRefresh = false;
+          var lastTouchY = 0;
+          var touchstartHandler = function(e) {
+            if (e.touches.length != 1) return;
+            lastTouchY = e.touches[0].clientY;
+            // Pull-to-refresh will only trigger if the scroll begins when the
+            // document's Y offset is zero.
+            maybePreventPullToRefresh =
+                window.pageYOffset == 0;
+          }
+
+          var touchmoveHandler = function(e) {
+            var touchY = e.touches[0].clientY;
+            var touchYDelta = touchY - lastTouchY;
+            lastTouchY = touchY;
+            if (maybePreventPullToRefresh) {
+              // To suppress pull-to-refresh it is sufficient to preventDefault the
+              // first overscrolling touchmove.
+              maybePreventPullToRefresh = false;
+              if (touchYDelta > 0) {
+                e.preventDefault();
+                return;
+              }
+            }
+          }
+		  
+          document.addEventListener('touchstart', touchstartHandler, false);
+          document.addEventListener('touchmove', touchmoveHandler, false);      
+		});    
+
+	</script>
+	<!--To prevent pull to refresh code ends here-->
+
+<body>
+
+<div class="invisible" style="display:none;"></div>
+	<div class="container" style="display:none;">
+    	<div class="wrapper">
+				<div class="p1 fadeIn" id="p1ID">
+					<p class="name" id="myName">You</p>
+				</div>
+				<!--p1-->
+				<div class="vs2 fadeIn">
+					<img src="vs.png">
+				</div>
+				<div class="p2 fadeIn" id="p2ID">
+					<p class="name" id="opponentName">Opponent</p>
+				</div>
+				<!--p2-->
+				
+				<div class="opponent-height fadeIn" style="display:none;">
+					<div class="relative">
+						<div class="fill"></div>
+					</div>
+				</div>
+				
+				<div class="arrow pulse" style="display:none;"><img src="../arrow.png"></div>
+        </div>
+
+		<button class="cancelSpectate" id="idOfCancelSpectateButton" style="display:none;" onclick="cancelSpectateController()">Cancel</button>
+		<div id="netSpeedBlinker"><img src="../wifiSymbol.png"></div>
+		<div id="countDown" style="display:none;">
+			<label id="countDownLabel">0</label>
+		</div>
+	</div>
+    <!--container-->
+    
+    <!--invisible-->   
+    
+    <!--score-->
+    <div class="score slideLeft" id="currentTrophies" style="display:none;">
+		<img src="trophy-white.png" id="trophyWhite_id"/>
+		<p id="currentTrophies_p"></p>
+    </div>
+    <!--score-->   
+    
+    <!--level-->
+    <div class="level slideLeft" id="currentLevel" style="display:none;">
+    	Level 1
+    </div>
+    <!--level-->
+    
+    <!--difficulty-meter-->
+	
+    <div class="difficulty-meter slideDown" id="theDifficultyMeter" style="display:none;">
+    	<ul>
+        	<li class="l5" id="lvl5"></li>
+            <li class="l4" id="lvl4"></li>
+            <li class="l3" id="lvl3"></li>
+            <li class="l2" id="lvl2"></li>
+            <li class="l1" id="lvl1"></li>
+        </ul>
+    </div>
+	
+    <!--difficulty-meter-->
+    
+    <!--upcoming-->
+    <div class="upcoming slideRight" id="nextBlockWindow" style="display:none;">
+    	<p>Next</p>
+    </div>
+    <!--upcoming-->
+    
+    <!--time-->
+    <div class="time slideLeft" id="theTime" style="display:none;">
+    	<p>Time</p>
+        <b id="timeText" >03:00</b>
+    </div>
+    <!--time-->
+    
+    <!--my trophies-->
+    <div class="my-trophies slideRight" id="myTrophies" style="display:none;">
+    	<div class="count">
+        	<img src="trophy.png"/>
+            <p id="playerTrophy"></p>
+        </div>
+    </div>
+    <!--my trophies-->
+	
+    <!--opponent trophies-->
+    <div class="opponent-trophies slideLeft" id="opponentTrophies" style="display:none;">
+    	<div class="count">
+        	<img src="trophy.png" />
+            <p id="oppTrophy"></p>
+        </div>
+    </div>
+    <!--my opponent-->
+    
+    <div class="overlay" id="overlayid"></div>    
+    
+    <!--game won screen-->
+    <div class="modalNew" id="gameWon" style="display:none;">
+      <div class="modalNew-margin">
+    	<img src="trophy.png" class="fadeIn" />
+        <div class="game-score">
+        	<b id="winningStatus">you won!</b>
+            <p id="trophyWon">Trophies won: 26</p>
+            <button class="btn2 btn-green" onclick='restartButton()'>continue</button>
+        </div>
+      </div>
+    </div>
+    <!--game won screen-->   
+    
+    <!--game lost screen-->
+    <div class="modalNew" id="gameLost" style="display:none;">
+      <div class="modalNew-margin">
+    	<img src="lost.png" class="fadeIn tossing" />
+        <div class="game-score">
+        	<b class="lost-text">you lost!</b>
+            <p id="trophyLost">Trophies lost: 15</p>
+            <button class="btn2 btn-green" onclick='restartButton()'>continue</button>
+        </div>
+      </div>
+    </div>
+    <!--game lost screen-->  
+    
+    <!--opponent search-->
+    <div class="modalNew" id="opponentSearch" style="display:none;">
+      <div class="modalNew-margin">
+    	<img src="search.gif" class="fadeIn gif" />
+        <div class="game-score">
+        	<b>searching opponent...</b>    
+			<button class="btn2 btn-red" id="cancelSearch" onclick='cancelSearchingOpponent()'>Cancel</button>
+        </div>
+      </div>
+    </div>
+    <!--opponent search-->
+	
+	<!--No opponents found-->
+	<div class="modalNew" id="noOpponentsFound" style="display:none;">
+      <div class="modalNew-margin no-opponent">
+    	<div class="game-score no-opponent-child">
+        	<b>NO OPPONENTS FOUND!</b>    
+			<button class="btn2 btn-red" id="noOpponentsOK" onclick='noOpponentsReturn()'>OK</button>
+        </div>
+      </div>
+    </div>
+	<!--No opponents found-->
+    
+	<!--battle info modal box-->
+	<div class="modalNew" id="battleInfoModal" style="display:none;">
+		<div class="modalNew-margin no-opponent" id="battleModalBox_div_id">
+			<div class="game-score vs-who">
+				<p id="firstPlayerModal"></p>
+				<div class="battleModalBox">
+					<img src="trophy.png">
+					<p id="FirstPlayerTrophyModal" >800</p>
+				</div>
+				<div>
+				<img id="vs_id" src="vs.png"/>
+				</div>
+					<p id="secondPlayerModal">User2</p>
+				<div class="battleModalBox"><img src="trophy.png">
+					<p id="SecondPlayerTrophyModal">800</p>
+				</div>
+			</div>
+		</div>
+	</div>
+	<!--battle info modal box-->
+	
+    <!--splash-->
+	<div class="splash" id="mainMenuSplash">
+		<a onclick='logOut()' class="logoutBtn" id="logout_id"><img src="logout.png" width="50"></a>
+		<div class="userDetails">
+			<p id="nameOfUser">Name</p>
+			<div class="trophydetails">
+				<img src="trophy.png"/>
+				<b id="trophiesOfUser">Trophy</b>
+			</div>
+		</div>
+	
+      <div class="splash-wrapper" id="theHtml">
+    	<div class="logo"><img src="logo.png" /></div>     
+        <div class="game-buttons">
+        	<button class="btn2 btn-green"  onmouseover="playMouseHover()" onclick='multiPlayer(true)'>Multiplayer</button> 
+            <button class="btn2 btn-blue"  onmouseover="playMouseHover()" onclick='spectator()'>Spectate</button>
+            <!--<button class="btn2 btn-red"  onmouseover="playMouseHover()" onclick='replayButton()'>Replay</button>-->
+            <button class="btn2 btn-red"  onmouseover="playMouseHover()" onclick='hallOfFameButton()'>Hall Of Fame</button>
+        </div>
+      </div>
+    </div>
+    <!--splash-->
+	
+	<div id="hall_of_fame" style="display:none;">
+		<a class="back" id="backHallOfFame" onclick="backHallOfFame()"><img src="../back.png"></a>
+	</div>
+	
+	<div class="replays" id="isReplay" style="display:none;">
+    	<a class="back" id="backReplay" onclick="backReplay()"><img src="../back.png"></a>
+    	<div class="logo"><img src="../logo.png"></div>     
+        <h3 class="heading">Replays</h3>
+        <ul class="re-headings">
+        	<li><p class="active btn2 btn-red">All Replays</p></li>
+            <li><p class="unactive btn2 btn-red">My replays</p></li>
+        </ul>
+        
+        <div class="players-list">
+        <!--space-->
+         <div class="space" id="replaySpace">
+          </div>
+          <!--space-->
+        </div>
+        <!--players-list-->
+    </div>
+	
+	<div class="replays" id="isSpectate" style="display:none;">
+    	<a class="back" id="backSpectate" onclick="backSpectate()"><img src="../back.png"></a>
+    	<div class="logo"><img src="../logo.png"></div>     
+        <h3 class="heading"></h3>
+        <h2 id="NoGamesSpectate">NO Games Are Played Currently</h2>
+		<div class="players-list">
+			<div class="space" id="theSpace">            
+          </div>
+		</div>
+    </div>
+	
+	<div class="replays" id="isHallOfFame" style="display:none;">
+    	<a class="back" id="backHallOfFame" onclick="backHallOfFame()"><img src="../back.png"></a>
+    	<div class="logo"><img src="../logo.png"></div>     
+        <h3 class="heading">HALL OF FAME</h3>
+        
+		<div class="players-list">
+			<div class="space" id="hallOfFameSpace">            
+				<ul>
+					<li style="border-top: 0;">
+						<div class="p1-trophies" style="color: #0fa7b2 !important;">
+							<p style="font-size: 17px;">NAME</p>
+						</div>
+						<div class="count2" style="color: #0fa7b2 !important;">
+							<p style="font-size: 17px;">TROPHIES</p>
+						</div>
+					</li>
+				</ul>
+			</div>
+		</div>
+    </div>
+	
+    <script>
+	$(window).scroll(function() {
+		$('#p1ID').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("fadeIn");
+				}
+		});
+		
+		$('#p2ID').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("fadeIn");
+				}
+		});
+		
+		$('#nextBlockWindow,#opponentTrophies').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("slideRight");
+				}
+		});
+		
+		$('#theTime, #myTrophies, #currentTrophies, #currentLevel').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("slideLeft");
+				}
+		});
+		
+		$('#theTime').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("pulse");
+				}
+		});
+	
+		$('#theDifficultyMeter').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("slideDown");
+				}
+		});
+		
+		$('.game-won img').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("fadeIn");
+				}
+		});
+		
+		/*$('.opponent-height').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("fadeIn");
+				}
+		});*/
+		
+		$('.modalNew-margin img').each(function(){
+			var imagePos = $(this).offset().top;
+
+			var topOfWindow = $(window).scrollTop();
+				if (imagePos < topOfWindow+400) {
+					$(this).addClass("tossing");
+				}
+		});
+	});
+	//$(".splash-wrapper").show();
+
+	$("#idOfFacebookPage").hide();
+</script>
+	<a class="volume" id="idOfVolume" onclick="changeSounds()"><img id="soundImg" src="../volume_up.png"></a>
+</body>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-48395873-32', 'auto');
+  ga('send', 'pageview');
+
+</script>

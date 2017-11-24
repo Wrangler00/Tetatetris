@@ -1,0 +1,669 @@
+/*-------------------------------------------------*/
+
+var express = require('express');
+var router = express.Router();
+var bcrypt = require('bcryptjs');
+var passport = require('passport');
+var util = require('util')
+  , Strategy = require('passport-strategy');
+var LocalStrategy = require('passport-local').Strategy;
+var FacebookStrategy = require('passport-facebook').Strategy;
+var GoogleStrategy = require('passport-google-oauth').OAuth2Strategy;
+var TwitterStrategy = require('passport-twitter').Strategy;
+var nodemailer = require('nodemailer');
+var cookieParser = require('cookie-parser');
+var session = require('express-session');
+
+// Init App
+var app = express();
+var http = require('http').Server(app);
+var https = require('https');
+//var io = require('socket.io')(http);
+var User = require('../models/user');
+
+app.use(cookieParser());
+// Express Session
+
+app.use(session({
+    secret: 'secret',
+    saveUninitialized: true,
+    resave: true,
+}));
+
+var crypto;
+
+try {
+  crypto = require('crypto');
+} catch (err) {
+  console.log('crypto support is disabled!');
+}
+// var CustomStrategy = require('passport-custom').Strategy;
+
+var User = require('../models/user');
+var Trophy = require('../models/trophy');
+var configAuth = require('./auth.js');
+var transporter = nodemailer.createTransport('smtps://teteateteris@gmail.com:123password123@smtp.gmail.com');
+var session_id,Pass_email,player_type,url_parameter,trophytable_id,userIdChanging,userDetailsChanging;
+var registering_user;
+var mailOptions,subject,text,html;
+
+// Register
+router.get('/register', function(req, res){
+	console.log("--------Inside register router get");
+	res.render('register');
+});
+
+// Reset
+router.get('/resetpassword', function(req, res){
+	res.render('resetpassword');
+});
+
+// fame
+router.get('/fame', function(req, res){
+	res.render('fame');
+});
+
+router.get('/NewPass', function(req, res){
+	req.session.mail = Pass_email;
+	res.render('NewPass');
+});
+
+// Login
+router.get('/login', function(req,res){
+	console.log("------------Inside router login get");
+	res.render('login');
+});
+
+router.get('/loggedIn', function(req,res){
+	console.log("------------Inside loggedIn get");
+	res.render('loggedIn');
+});
+
+
+function send_mail(email,subject,text,html){
+	console.log("Inside send_mail function");
+	mailOptions = {
+		from: '"SNA Power - Tech. Division ðŸ‘¥" <danish.saleem@iitrpr.ac.in>', // sender address 
+		to: email, // list of receivers 
+		subject: subject, // Subject line 
+		text: text, // plaintext body 
+		html: html// html body 
+	};
+}
+
+router.post('/resetpassword', function(req, res){
+	var email = req.body.email;
+	req.checkBody('email', 'Email is required').notEmpty();
+	var errors = req.validationErrors();
+	if(errors){
+		res.render('resetpassword',{
+			errors:errors
+		});
+	}
+	else{
+		User.getUserByEmail(email, function(err, user){
+		if(err) throw err;
+		if(!user){
+			req.flash('error_msg', 'No account linked with this email. Try another Email');
+			res.redirect('/users/resetpassword');
+			return;
+		}
+		var token1 = Math.floor(1000 + Math.random() * 9000);
+		console.log(token1);
+		user.local.token = token1;
+		user.save();
+		
+		subject= 'Tetetetris Game-Password Reset OTP'; // Subject line 
+			text= 'Your OTP is  '+token1+'ðŸ´'; // plaintext body 
+			html='<b>'+text+'</b>' ;// html body 
+			send_mail(email,subject,text,html);
+			Pass_email=email;
+			transporter.sendMail(mailOptions, function(error, info){
+				if(error){
+					return console.log(error);
+				}
+				console.log('Message sent: ' + info.response);
+			});
+			req.flash('success_msg', 'OTP has been send');
+			res.redirect('/users/NewPass');
+		});
+	}
+});
+
+router.post('/NewPass', function(req, res){
+	var password = req.body.password;
+	var password2 = req.body.password2;
+	var otp_value = req.body.sentotp;
+	req.checkBody('password', 'Password is required').notEmpty();
+	req.checkBody('password2', 'Passwords do not match').equals(req.body.password);
+	req.checkBody('sentotp', 'OTP is required').notEmpty();
+	var errors = req.validationErrors();
+	if(errors){
+		res.render('NewPass',{
+			errors:errors
+		});
+	}
+	else{
+		email= req.session.mail;
+		console.log("mera email"+email);
+		User.getUserByEmail(email,function(err, user){
+			if(err) throw err;
+			if(!user){
+				req.flash('error_msg', 'No account linked with this email. Try another Email');
+				res.redirect('/users/NewPass');
+				return;
+			}
+
+			if (otp_value == user.local.token){
+				user.local.password = password;
+				user.local.token = null;
+				User.createUser(user, function(err, user){
+					if(err) throw err;
+				});
+				req.flash('success_msg', 'Password has been changed. Login now');
+				res.redirect('/users/login');
+			}
+			else{
+					req.flash('error_msg', 'OTP incorrect');
+					res.redirect('/users/NewPass');
+					return;
+				}
+		});
+	}
+});
+
+// Register User
+router.post('/register',function(req, res){	
+	console.log("Inside router.post of register!!!!!");
+	
+	var name = req.body.name;
+	var email = req.body.email;
+	var username = req.body.username;
+	var password = req.body.password;
+	var password2 = req.body.password2;
+
+	// Validation
+	req.checkBody('name','Name').notEmpty(); 
+	req.checkBody('username','Username').notEmpty();
+	req.checkBody('email', 'email').notEmpty();
+	req.checkBody('password', 'Password').notEmpty();
+	req.checkBody('password2', 'Password2').notEmpty();
+	req.checkBody('password2', 'PassMatch').equals(req.body.password);
+
+	var errors = req.validationErrors();
+
+	if(errors){
+		res.render('register',{
+			errors:errors
+		});
+	}else{
+			console.log("Else part of router.post of register*******");
+			User.getUserByEmail(email, function(err,user){	
+				
+				if(err) throw err;
+				if(user){
+					req.flash('error_msg', 'User Email already registered. Please Login');
+					res.redirect('/users/login');
+					return;
+				}
+				
+				var newUser = new User();
+				newUser.local.name= name;
+				newUser.local.email=email;
+				newUser.local.username= username;
+				trophytable_id = newUser._id;
+				newUser.local.password= password;
+				User.createUser(newUser, function(err, user){
+					if(err) throw err;
+				});
+	
+				var newTrophy = new Trophy();
+				newTrophy.trophy_id = trophytable_id;
+				newTrophy.trophies = 800;
+				newTrophy.rank = "Bronze";
+				newTrophy.name =username;
+				newTrophy.Level = 1;
+				
+				Trophy.createUser(newTrophy, function(err, user){
+					if(err) throw err;
+				});
+				subject= 'Tetetetris Game-Registration Successful'; // Subject line 
+				text= 'This email has been linked to an account in tetetetris gameðŸ´'; // plaintext body 
+				html='<b>This email has been linked to a account in tetetetris gameðŸ´</b>' ;// html body 
+				send_mail(email,subject,text,html);
+				transporter.sendMail(mailOptions, function(error, info){
+					if(error){
+						return console.log(error);
+					}
+					console.log('Message sent: ' + info.response);
+				});
+				req.flash('success_msg', 'You are registered and can now login');
+				res.redirect('/users/login');
+			});
+		}
+});
+
+passport.use(new LocalStrategy(
+  function(username,password,done) {
+	  	  
+	User.getUserByUsername(username, function(err,user){
+		if(err) throw err;
+	
+		if(!user){
+			return done(null, false, {message: 'Unknown User'});
+		}
+	
+		console.log("Inside user local strategy!!!!!!");
+		console.log(user);
+		
+		User.comparePassword(password, user.local.password, function(err, isMatch){
+			if(err) throw err;
+			console.log("Inside User.comparePassword--------------");
+			if(isMatch){
+				console.log("Inside if part of User.comparePassword-----------------");
+				return done(null,user);
+			} else {
+				console.log("Inside else part of User.comparePassword-----------------------");
+				return done(null, false, {message: 'Invalid password'});
+			}
+		});
+   });
+}));
+
+passport.use('loggedIn',new LocalStrategy(
+	function(password,done){
+		console.log("#########################Inside passport.use of loggedIn!!!!!!");
+		User.getUserBycookie(password,function(err,user){
+			if(err) throw err;
+			
+			if(user){
+				user.guest.name= user.guest.name;
+				user.save();
+				console.log("--------------user has been found-----------")
+				Trophy.getUserBydbid(user._id,function(err,user_temp){
+								if(err) throw err;
+								if(user_temp){
+									user_temp.name = user.guest.name;
+									user_temp.trophies = user.guest.trophies;
+									console.log("inside get User by Db id: "+user_temp);
+									user_temp.save();	
+								}
+								else{
+									console.log("some problem with updating guest user by db id!");
+								}
+							});
+				return done(null, user);
+			}
+			else{
+				console.log("-----------invalid user--------------");
+			}
+			return done(null, user);
+	});
+}));
+
+passport.use('guest',new LocalStrategy(
+  function(username,password,done){
+  //console.log("Inside passport.use of guest!!!!!!");
+  User.getUserBycookie(password, function(err, user){
+   	if(err) throw err;
+	
+   	//if cookie present (checked in terms of password)
+	if(user){
+						//console.log("Inside If part of passport.use of guest!!!!!!");
+						//console.log(user.guest.name);
+	    				user.guest.name = username;
+						//console.log(user.guest.name);
+	    				user.save();
+						//console.log("pass: "+password);
+	    				
+						Trophy.getUserBydbid(user._id,function(err,user_temp){
+							if(err) throw err;
+							if(user_temp){
+								user_temp.name = user.guest.name;
+								user_temp.trophies = user.guest.trophies;
+								//console.log("inside get User by Db id: "+user_temp);
+								user_temp.save();	
+							}
+							else{
+								console.log("some problem with updating guest user by db id!");
+							}
+						});
+						
+	    				return done(null, user);
+	    	}
+			
+	//if cookie not present
+   	else {				
+						//console.log("Inside else part of passport.use of guest!!!!!!");
+					//	console.log(username);
+	    				var newUser = new User();
+						//console.log(newUser._id);
+	    				newUser.guest.cookie = newUser._id;
+	    				trophytable_id = newUser._id;
+	    				newUser.guest.name = username;
+	    				newUser.save(function(err){
+	    					if(err)	throw err;
+							//console.log("hawa hawai!!!!!")
+	    					return done(null, newUser);
+						});
+						//console.log("nanananananaan!!!!!!");
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.trophies =800;
+						newTrophy.rank = "Bronze";
+						newTrophy.name =username;
+						newTrophy.Level = 1;
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	     }
+  });
+}));
+ 
+//Facebook Strategy***************Starts Here Sna
+passport.use(new FacebookStrategy({
+	    clientID: configAuth.facebookAuth.clientID,
+	    clientSecret: configAuth.facebookAuth.clientSecret,
+	    callbackURL: configAuth.facebookAuth.callbackURL
+	  },
+	  function(accessToken, refreshToken, profile, done) {
+	    	process.nextTick(function(){
+	    		User.findOne({'facebook.id': profile.id},function(err,user){
+	    			if(err)
+	    				return done(err);
+	    			if(user){
+	    				//session_id=user._id;
+						//url_parameter = "/?user_id="+session_id;
+	    				return done(null, user);
+	    			}
+	    			else {
+	    				var newUser = new User();
+	    				newUser.facebook.id = profile.id;
+	    				newUser.facebook.token = accessToken;
+	    				trophytable_id = newUser._id;
+	    				newUser.facebook.name = profile.displayName;
+	    				// newUser.facebook.email = profile.emails[0].value;
+						
+	    				newUser.save(function(err){
+	    					if(err)
+	    						throw err;
+	    					//session_id=newUser._id;
+							//url_parameter = "/?user_id="+session_id;
+	    					return done(null, newUser);
+	    				});
+						
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.name =profile.displayName;
+						newTrophy.trophies = 800;
+						newTrophy.rank = "Bronze";
+						newTrophy.Level = 1;
+						
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	    				console.log(profile);
+	    			}
+	    		});
+	    	});
+	    }
+	));
+// Facebook Strategy***************Ends Here Sna
+
+passport.use(new GoogleStrategy({
+	    clientID: configAuth.googleAuth.clientID,
+	    clientSecret: configAuth.googleAuth.clientSecret,
+	    callbackURL: configAuth.googleAuth.callbackURL
+	  },
+	  function(accessToken, refreshToken,profile, done) {
+	    	process.nextTick(function(){
+	    		User.findOne({'google.id': profile.id}, function(err, user){
+	    			if(err)
+	    				return done(err);
+	    			if(user){
+	    				session_id=user._id;
+						url_parameter = "/?user_id="+session_id;
+	    				return done(null, user);
+	    			}
+	    			else {
+	    				var newUser = new User();
+	    				newUser.google.id = profile.id;
+	    				newUser.google.token = accessToken;
+	    				newUser.google.name = profile.displayName;
+	    				trophytable_id = newUser._id;
+	    				newUser.google.email = profile.emails[0].value;
+	    				newUser.save(function(err){
+	    					if(err)
+	    						throw err;
+	    					session_id=newUser._id;
+							url_parameter = "/?user_id="+session_id;
+	    					return done(null, newUser);
+	    				});
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.name =profile.displayName;
+						newTrophy.trophies = 800;
+						newTrophy.rank = "Bronze";
+						newTrophy.Level = 1;
+						
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	    				console.log(profile);
+	    			}
+	    		});
+	    	});
+	    }
+));
+
+passport.use(new TwitterStrategy({
+    consumerKey: configAuth.twitterAuth.consumerKey,
+    consumerSecret:configAuth.twitterAuth.consumerSecret,
+    callbackURL: configAuth.twitterAuth.callbackURL
+  }, 
+  
+  function(token, tokenSecret, profile, done) {
+    process.nextTick(function(){
+	    		User.findOne({'twitter.id': profile.id}, function(err, user){
+	    			if(err)
+	    				return done(err);
+	    			if(user){
+	    				session_id=user._id;
+						url_parameter = "/?user_id="+session_id;
+	    				return done(null, user);
+	    			}
+	    			else{
+	    				var newUser = new User();
+	    				newUser.twitter.id = profile.id;
+	    				newUser.twitter.name = profile.name;
+	    				newUser.twitter.username = profile.screen_name;
+	    				trophytable_id = newUser._id;
+	    				newUser.save(function(err){
+	    					if(err)
+	    						throw err;
+	    					session_id=newUser._id;
+							url_parameter = "/?user_id="+session_id;
+	    					return done(null, newUser);
+	    				});
+	    				var newTrophy = new Trophy();
+						newTrophy.trophy_id = trophytable_id;
+						newTrophy.trophies = 800;
+						newTrophy.rank = "Bronze";
+						newTrophy.name =profile.name;
+						newTrophy.Level = 1;
+						
+						Trophy.createUser(newTrophy, function(err, user){
+							if(err) throw err;
+						});
+	    				console.log(profile);
+	    			}
+	    		});
+	    	});
+  }
+));
+
+passport.serializeUser(function(user, done) {
+	//console.log("Inside passport.serializeUser");
+	//console.log(user);
+	done(null, user.id);
+});
+
+passport.deserializeUser(function(id, done) {
+	//console.log("Inside passport.deserializeUser");
+	//console.log(id);
+	User.getUserById(id, function(err, user) {
+		done(err, user);
+	});
+});
+
+//the login form is submitted to the server via the post method
+router.post('/login',
+  passport.authenticate('local', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true}),
+  function(req, res) {
+	  res.redirect("/");
+});
+
+router.post('/guest',
+  passport.authenticate('guest', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true}),
+  function(req, res){
+	//console.log("Inside guest post re,rec function *******");
+	res.redirect("/");
+});
+
+router.post('/loggedIn',
+  passport.authenticate('loggedIn', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true}),
+  function(req, res){
+	console.log("-----------Inside loggedIn post re,rec function *******");
+	res.redirect("/");
+});
+
+router.get('/auth/facebook', passport.authenticate('facebook', {scope: ['email']}));
+
+router.get('/auth/facebook/callback',
+	  passport.authenticate('facebook', {successRedirect: url_parameter,
+	                                      failureRedirect: '/users/login' }),
+	  function(req, res) {
+		res.redirect(url_parameter);//passuser id here
+	  }
+);
+
+router.get('/auth/google', passport.authenticate('google', {scope: ['profile', 'email']}));
+
+router.get('/auth/google/callback',
+	  passport.authenticate('google', {successRedirect: url_parameter,
+	                                    failureRedirect: '/users/login' }),
+	  function(req, res) {
+		res.redirect(url_parameter);//passuer id here
+});
+
+router.get('/auth/twitter', passport.authenticate('twitter'));
+
+router.get('/auth/twitter/callback',
+  passport.authenticate('twitter', { successRedirect: url_parameter,
+                                     failureRedirect: '/users/login' }),
+  function(req, res) {
+    res.redirect(url_parameter);//passuser id here
+});
+
+router.get('/logout', function(req, res){
+	req.logout();
+	req.flash('success_msg', 'You are logged out');
+	
+	//cookies destroy
+	req.cookies = {};
+	
+	//session destroy
+	req.session.destroy(function (err) {
+        if(err)
+			console.log(err);
+		else
+			res.redirect('/users/login');
+    });
+});
+
+router.get('/',ensureAuthenticated,function(req,res){
+	//console.log("Inside router get ensure authenticated--------------------");
+	if(isEmpty(req.session.passport)){
+		//console.log("isEmpty(req.session.passport)");
+		//console.log(req);
+		//console.log("------END----------");
+		//have to create new session
+		
+		//on progress
+		/*User.getUserBydbid(req.cookies.user_id, function(err, user){
+			if(err) throw err;
+			if(user){
+				console.log("-----------------vitamin c------------------");
+				if(!isEmpty(user.local)){
+					console.log("isEmpty(user.local)");
+					//passport.authenticate('local', {successRedirect:'/', failureRedirect:'/users/login',failureFlash: true});
+				}else if(!isEmpty(user.facebook)){
+						console.log("isEmpty(user.facebook)");
+						//passport.authenticate('facebook', {scope: ['email']});
+					}else if(!isEmpty(user.google)){
+							console.log("!isEmpty(user.google)");
+							//passport.authenticate('google', {successRedirect: url_parameter,failureRedirect: '/users/login' });
+						}else if(!isEmpty(user.twitter)){
+								console.log("isEmpty(user.twitter)");
+								//passport.authenticate('twitter', { successRedirect: url_parameter,failureRedirect: '/users/login' });
+							}else if(!isEmpty(user.guest)){
+									console.log("isEmpty(user.guest)");
+									//passport.authenticate('guest', {successRedirect:url_parameter, failureRedirect:'/users/login',failureFlash: true});
+								}
+			}					
+			else console.log("*********some problem in finding getUserBydbid");
+		});*/
+	    res.render('loggedIn',{userid:req.cookies.user_id});
+	}
+	else{
+		//console.log(req.session.passport.user);
+		res.render('index',{userid:req.session.passport.user});
+	}
+});
+
+//user authentication
+function ensureAuthenticated(req, res, next){
+	//console.log("Inside ensureAuthenticated...............");
+	if(req.isAuthenticated()){
+		//console.log("Inside if part of ensureAuthenticated-------");
+		//console.log(req.cookies);
+		return next();
+	} else {
+				//console.log("Inside else part of ensureAuthenticated----------");
+				//console.log(req.cookies.user_id);
+				if(isEmpty(req.cookies.user_id)){
+					console.log("user_id == undefined");
+					//res.redirect('/users/login');
+					res.render('loggedIn',{userid:req.cookies.user_id});
+				}
+				else{
+					 return next();
+				}
+			}	
+}
+
+module.exports = router;
+
+//to check if object is empty
+function isEmpty(obj) {
+    // null and undefined are "empty"
+    if (obj == null) return true;
+
+    // Assume if it has a length property with a non-zero value
+    // that that property is correct.
+    if (obj.length > 0)    return false;
+    if (obj.length == 0)  return true;
+
+    // If it isn't an object at this point
+    // it is empty, but it can't be anything *but* empty
+    // Is it empty?  Depends on your application.
+    if (typeof obj !== "object") return true;
+
+    // Otherwise, does it have any properties of its own?
+    // Note that this doesn't handle
+    // toString and valueOf enumeration bugs in IE < 9
+    for (var key in obj) {
+        if (hasOwnProperty.call(obj, key)) return false;
+    }
+    return true;
+}

@@ -1,0 +1,3176 @@
+var express = require('express');
+var path = require('path');
+var cookieParser = require('cookie-parser');
+var bodyParser = require('body-parser');
+var exphbs = require('express-handlebars');
+var expressValidator = require('express-validator');
+var flash = require('connect-flash');
+var session = require('express-session');
+var passport = require('passport');
+var LocalStrategy = require('passport-local').Strategy;
+var Elo = require('arpad');
+
+//elo rating
+var elo = new Elo();
+var mongo = require('mongodb');
+var mongoose = require('mongoose');
+
+mongoose.connect('mongodb://localhost/loginapp');
+var db = mongoose.connection;
+
+var users = require('./routes/users');
+var Trophy = require('./models/trophy');
+var User = require('./models/user');
+
+// Init App
+var app = express();
+var http = require('http').Server(app);
+var io = require('socket.io')(http);
+
+// View Engine
+app.set('views', path.join(__dirname, 'views'));
+app.engine('handlebars', exphbs({defaultLayout:'layout'}));
+app.set('view engine', 'handlebars');
+
+// BodyParser Middleware
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(cookieParser());
+
+// Set Static Folder
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Express Session
+app.use(session({
+    secret: 'secret',
+    saveUninitialized: true,
+    resave: true,
+}));
+
+// Passport init
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Express Validator
+app.use(expressValidator({errorFormatter: function(param, msg, value) {
+      var namespace = param.split('.')
+      , root = namespace.shift()
+      , formParam = root;
+
+    while(namespace.length) {
+      formParam += '[' + namespace.shift() + ']';
+    }
+    return {
+      param : formParam,
+      msg   : msg,
+      value : value
+    };
+  }
+}));
+
+// Connect Flash
+app.use(flash());
+
+app.use(function (req, res, next) {
+  res.locals.success_msg = req.flash('success_msg');
+  res.locals.error_msg = req.flash('error_msg');
+  res.locals.error = req.flash('error');
+  res.locals.user = req.user || null;
+  next();
+});
+
+app.use('/',users);
+app.use('/users', users);
+app.use(express.static(__dirname + '/mypublic'));
+
+http.listen(80,function(){
+  console.log('listening on *:80');
+});
+
+io.on('connection',function(socket){  
+	socket.emit("Connected",true);
+	console.log("A User Connected");
+
+	socket.on('clientUser_id',function(data){
+	   var obj = data;
+	   var db_id = obj.db_id;
+	   var token = obj.token;
+	   socket.dbID = db_id;
+				
+	   Trophy.getUserBydbid(socket.dbID, function(err, user){
+			if(err) throw err;
+			if(user){
+						socket.trophy_no = user.trophies;
+						socket.level = user.Level;
+						socket.nameUser = user.name;				  
+						socket.emit('setUserDetails',{username:socket.nameUser,trophies:socket.trophy_no});
+					}
+			else    console.log("Could not find user in trophy DB");
+	   });
+
+	   allUsers.activeUsers[socket.id] = socket;
+	   socket.existingUser = false;
+	  
+	   //check if any game exists of this user 
+	   socket.emit('checkUserExists',socket.dbID);
+	});
+
+	//this is basically to check if the user is involved in any current game
+	socket.on('userExists',function(theUser){
+		socket.dbID = theUser;
+		var theKey = getKeyOfExistingUser(theUser);
+		if(theKey == 404) console.log("No Game Found!");
+		else{
+		  if(getIsMultiplayer(theKey)){
+			loadCurrentStatusOfGame(socket,theKey);
+			socket.emit('YouCanPlayMultiplayer',true);
+		  }
+		  else	console.log("No Game Found!");
+		}
+	});
+
+	socket.on('gridMakingCompleted',function(){
+		var mySocketID = socket.id;
+		proceedToGame(socket);
+	});
+
+	socket.on('iWillPlayGame',function(stat){
+		socket.emit('makeGridFirst',true);
+	});
+
+	socket.on('Iwanttospectate',function(){
+		socket.emit('sending data of clients', finding_opponent()); 
+	});
+
+	socket.on('sendMeTheGameOfThisID',function(data){
+		var isRoom = data;
+		//console.log("sendMeTheGameOfThisID: "+isRoom);
+		var specRoom = allGames.activeGames[isRoom].spectatingRoom;
+		socket.spectatingRoom = specRoom;
+		joinTheRoom(socket,specRoom);
+		allGames.activeGames[isRoom].totSpectators++;
+	});
+
+	socket.on('wantToPlayMultiplayer',function(){
+		create_game(socket.id);
+		players[socket.id].mySocket = socket;    
+		var trop = allUsers.activeUsers[socket.id].trophy_no;
+		allUsers.waitingForBattleUsers[socket.id]=trop;
+		allUsers.NoOfmultiplayerUsersInQueue++;
+		if(opponentAssigningProcessVal==null)
+			opponentAssigningProcess();
+	});
+
+	//when user cancels the spectate mode
+	socket.on('cancelSpectatePlease',function(){
+		//leaving the spectating room
+		socket.leave(socket.spectatingRoom);
+		socket.emit('leaveSpectateRoomCompleted',true);
+	});
+    
+	socket.on('cancelTheGame',function(){
+		if(allUsers.waitingForBattleUsers[socket]){	
+			delete allUsers.waitingForBattleUsers[socket];
+			allUsers.NoOfmultiplayerUsersInQueue--;
+		}
+	});
+    
+	socket.on('Clients key status',function(data){
+		var myID = socket.id;
+		keys_stat = data;
+		checkkeystatus(socket.id);
+	});
+
+	//for hall of fame----------strt here
+	socket.on("hallOfFameButtonPressed",function(){
+		halloffame = {};
+		Trophy.getUserByTrophy(function(err, user){
+		if(err) throw err;
+		if(user) socket.emit('halloffamedata',user);
+		else	console.log("could not find HallOfFame data");
+	   });
+	}); 
+
+	socket.on('touchMovement',function(data){
+		var sPt = data.startPoint,
+		ePt = data.endPoint,
+		hd = data.horizontalDistTravelled,
+		pHd = Math.abs(data.horizontalDistTravelled);
+
+		var sPty = data.startPointY,
+		ePty = data.endPointY,
+		vd = data.verticalDistTravelled,
+		pVd = Math.abs(data.verticalDistTravelled);
+
+		if(pHd <1 && pVd <1){
+			if(players[socket.id].swipedDown == true)
+				dropButtonReleased(socket.id);
+			else
+				rotateButton(socket.id);
+		}
+
+		if(vd>0 && pVd>30){
+			if(players[socket.id].swipedDown == false)
+				dropButtonPressed(socket.id);
+			players[socket.id].swipedDown = true;
+		}
+	});
+	
+	socket.on('DragEvent',function(data){
+		//console.log("------"+data.horDisTravelled);
+		 if(data.horDisTravelled < 0)
+			leftButton(socket.id);
+		 else
+			rightButton(socket.id);
+	});
+
+	socket.on('disconnect',function(temp){
+		//console.log('user disconnected'+socket.db_id);
+		/*if(players[socket.id]){
+			if(players[socket.id].isMultiplayer == false)	{
+				console.log("diconnected user was not playing any game!");
+				//players[socket.id] = {};
+			}
+		}*/
+		console.log("a user disconnected");
+	});
+});
+
+var halloffame = {};
+//speed up calls to has own property
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+const pieces =['i','j','l','o','s','t','z'];
+const randomColors =["red","orange","yellow","blue","purple","green","cyan"];
+const defaultBackgroundColor ="transparent";
+const gridWidth=15;
+const gridHeight=27;
+const previewGridWidth=4;
+const previewGridHeight=4;    
+
+var blockSpeed = 500;
+var currentReplays ={};
+var replayDictionary = {};
+var players ={};
+
+var AllTimeReplayData ={};
+var replayCountData = {};
+
+var isGameCurrentlyPlayed=0;
+var blockProperties = new Array();
+var totalRooms = 0;
+var allGames={};
+var opponentAssigningVal = true,opponentAssigningProcessVal=null;
+
+var allUsers={
+    activeUsers:{},
+    currentlyPlayingUsers:{},
+    spectatingUsers:{},
+    waitingForBattleUsers:{},
+    NoOfmultiplayerUsersInQueue:0,
+    recentlyDisconnectedUsers:{},
+    leftTheGameInBetweenUsers:{}
+};
+  
+var allGames={
+    activeGames:{},
+    pastGames:{},
+    noOfGamesPlayed :0,
+    noOfActiveGames:0
+};  
+ 
+function opponentAssigningProcess(){
+	var singlePlayerWaitCount = 0;
+	opponentAssigningProcessVal = setInterval(function(){
+		if(opponentAssigningVal){
+			singlePlayerWaitCount++;
+			if(allUsers.NoOfmultiplayerUsersInQueue >= 2){
+				singlePlayerWaitCount = 0;
+				opponentAssigningVal = assignOpponentAlgo();
+			}
+			else if(singlePlayerWaitCount == 120){
+					singlePlayerWaitCount = 0;
+					clearInterval(opponentAssigningProcessVal);
+					opponentAssigningProcessVal=null;
+				 }
+		}
+		console.log("------------allUsers.waitingForBattleUsers-------------")
+		console.log(allUsers.waitingForBattleUsers);
+	},500);
+}
+ 
+function assignOpponentAlgo(){
+	opponentAssigningVal = false;
+	var couple = 0;
+	var soc1,soc2,trop1,trop2;
+	for(key in allUsers.waitingForBattleUsers){
+		++couple;
+		if(couple == 1){
+			soc1 = key;
+			trop1 = allUsers.waitingForBattleUsers[key];
+		}
+		else{
+			couple=0;
+			soc2 = key;
+			trop2 = allUsers.waitingForBattleUsers[key];
+			roomFormation(soc1,soc2);
+			allUsers.activeUsers[soc1].emit('YouCanPlayMultiplayer',{myTrophy:trop1,oppoTrophy:trop2,oppName:players[soc2].nameOfUser});
+			allUsers.activeUsers[soc2].emit('YouCanPlayMultiplayer',{myTrophy:trop2,oppoTrophy:trop1,oppName:players[soc1].nameOfUser});
+			allUsers.NoOfmultiplayerUsersInQueue -= 2;
+			delete allUsers.waitingForBattleUsers[soc1];
+			delete allUsers.waitingForBattleUsers[soc2];
+		}
+	}
+	return true;
+}
+
+function makeActiveGamesDictionary(RName,RNo,ID1,ID2){
+  //console.log("Inside makeallGames.activeGames!!!!!!");
+  var roomName = RName,fstPlayer = ID1,sndPlayer = ID2,roomNumber = RNo;  
+  var specRoom = roomName+"spectate";
+  
+  allGames.activeGames[roomName] ={
+    firstPlayer:fstPlayer,
+  	secondPlayer:sndPlayer,
+	myRoomNo:roomNumber,
+  	totalPlayers:0,
+  	gameDifficulty:blockSpeed,
+  	gameLevel:1,
+  	timeOfStart:0,
+  	gameTimer:0,
+	theTime:null,
+  	replayMilisecRoomTimerVar:null,
+  	milisecRoomClock:0,
+  	spectatingRoom:specRoom,
+  	totSpectators:0,
+  	specTimer:0,
+	criticalTime:false,
+	finalTime:200,
+    moveBoxStageCount:0,
+	moveBoxCount:0,
+	firstWinTrophy:elo.newRatingIfWon(parseInt(allUsers.activeUsers[fstPlayer].trophy_no),
+					parseInt(allUsers.activeUsers[sndPlayer].trophy_no))-allUsers.activeUsers[fstPlayer].trophy_no,
+	
+	SecondWinTrophy:elo.newRatingIfWon(parseInt(allUsers.activeUsers[sndPlayer].trophy_no),
+					parseInt(allUsers.activeUsers[fstPlayer].trophy_no))-allUsers.activeUsers[sndPlayer].trophy_no
+  };
+}
+
+function getIsMultiplayer(ky){
+  var key =ky;
+  return players[key].isMultiplayer;
+}
+
+function loadCurrentStatusOfGame(soc,theKey){
+  var theSoc = soc;
+  var isKey = theKey;
+  console.log("++++You left the game in middle");
+  theSoc.id = isKey;
+  allUsers.activeUsers[theSoc.id] = theSoc;
+  theSoc.existingUser = true;
+}
+
+//key id is present if user already existed
+function getKeyOfExistingUser(theUser){
+  var userNm = theUser;
+  var foundout = 404;
+  Object.keys(players).forEach(function (key) {
+    if(userNm.localeCompare(players[key].username) == 0){
+        foundout =key;
+    }
+  });
+  return foundout;
+}
+
+function proceedToGame(soc){
+  var sockett = soc;
+  if(sockett.existingUser == false){
+    players[sockett.id].isMultiplayer = true;
+    makingOfGame(sockett.id);
+      
+    var rName = players[sockett.id].myRoom;
+    allGames.activeGames[rName].totalPlayers++;
+      
+    //if both players ready then start the game
+    if(checkIfplayersReady(sockett.id) == true) gameStarter(sockett.id);
+    else console.log("Both players not ready!");  
+  }
+  else{
+    players[sockett.id].mVar = setInterval( function() {
+		if (Object.keys(allUsers.activeUsers).indexOf(sockett.id)>-1) 
+			sendTetrisDataToClient(sockett.id); }, 50 );
+  }
+}
+
+function gameStarter(k){
+	  console.log("All players are ready");
+	  var IID = k;
+	  var oppo = players[k].opponentID;
+	  var rName = players[IID].myRoom;
+	  
+	  var play1 = allGames.activeGames[rName].firstPlayer;
+	  var play2 = allGames.activeGames[rName].secondPlayer;
+		
+	  allGames.activeGames[rName].milisecRoomClockVar = setInterval(function(){
+	  if (Object.keys(allUsers.activeUsers).indexOf(IID)>-1)
+			runRoomClock(rName,play1,play2); },50);
+}
+
+function runRoomClock(rName,p1,p2){
+	if(Object.keys(allGames.activeGames[rName]).length != 0){
+		var theRoom = rName;
+		var theTime = allGames.activeGames[theRoom].milisecRoomClock;
+		var thek1 = p1;
+		var thek2 = p2;
+			
+		allGames.activeGames[theRoom].moveBoxCount++;
+		
+		allGames.activeGames[theRoom].milisecRoomClock += 50;
+		var diff = allGames.activeGames[theRoom].gameDifficulty;
+		
+		//for movement of tetris
+		if(theTime%diff == 0){
+			moveBox(thek1);
+			moveBox(thek2);
+		}
+		 
+		if(theTime%1000 == 0){
+			allGames.activeGames[theRoom].gameTimer++;
+			setTheTimer(theRoom);
+			
+			//for increasing difficulty after every 20 seconds
+			if(theTime!=0 && allGames.activeGames[theRoom].gameTimer%20 == 0){
+				increaseDifficulty(theRoom);
+				//console.log("increasing difficulty!");
+			}
+		}
+		
+		//for emitting to both players
+		if(allUsers.activeUsers[thek1])	sendTetrisDataToClient(thek1);
+		if(allUsers.activeUsers[thek2])	sendTetrisDataToClient(thek2);
+		
+		//for sending to all spectators
+		var totMembers = allGames.activeGames[theRoom].totSpectators;
+		if(totMembers >0)	broadcastGameToSpectators(theRoom);
+	}
+}
+
+//updates the time for current Game
+function setTheTimer(theRoom){
+	var isRoom = theRoom;
+	var fsoc = allGames.activeGames[isRoom].firstPlayer; 
+	
+	//for reverse stop watch
+	var theMinutes = 2-parseInt(allGames.activeGames[isRoom].gameTimer/60);
+	if(theMinutes<0) theMinutes=0;
+	var theSeconds = 60-allGames.activeGames[isRoom].gameTimer%60;
+	if(theSeconds<0) theSeconds=0;
+	
+	if(theMinutes == 0 && theSeconds <= 30){
+		allGames.activeGames[isRoom].criticalTime = true;
+		//console.log("critical time reached: "+allGames.activeGames[isRoom].criticalTime);
+	}
+	
+	if(theMinutes == 0 && theSeconds <= 10){
+		allGames.activeGames[isRoom].finalTime = theSeconds;
+		//console.log("critical time reached: "+allGames.activeGames[isRoom].criticalTime);
+	}
+	
+	//timeout
+	if(theMinutes <= 0 && theSeconds <= 1){
+		//console.log("game over due to time out");
+		gameOver(fsoc,true);
+	}
+	
+	if(theSeconds <10)
+		allGames.activeGames[isRoom].theTime = 	theMinutes+":0"+theSeconds;
+	else
+		allGames.activeGames[isRoom].theTime = 	theMinutes+":"+theSeconds;
+}
+
+//for live game
+function increaseDifficulty(theRoom){
+	var isRoom = theRoom;
+	if(allGames.activeGames[isRoom].gameDifficulty >50){
+		allGames.activeGames[isRoom].gameDifficulty -= 50;
+		//console.log(allGames.activeGames[isRoom].gameDifficulty);
+		allGames.activeGames[isRoom].gameLevel++;
+	}
+}
+
+//checks if both players are ready for battle
+function checkIfplayersReady(k){
+  var IID = k;
+  var rName = players[IID].myRoom;
+  if(allGames.activeGames[rName].totalPlayers == 2)
+    return true;    
+  return false;
+}
+
+//emits the game of given room to all spectators
+function broadcastGameToSpectators(theRoom){
+  var isRoom = theRoom;
+  var spectateRoom = allGames.activeGames[isRoom].spectatingRoom;
+  var totMembers = allGames.activeGames[isRoom].totSpectators;
+  if(totMembers>0){
+	
+		var p1 = allGames.activeGames[isRoom].firstPlayer;
+		var p2 = allGames.activeGames[isRoom].secondPlayer;
+		
+		io.in(spectateRoom).emit('updateTheTetrisDetails',{tetrisBackgroundProperty:players[p1].backgroundPropertyOfAllBlocks,
+		tetrisPreviewProperty:players[p1].backgroundPropertyOfNextBlocks,
+		currentLevel:allGames.activeGames[isRoom].gameLevel,
+		timer:allGames.activeGames[isRoom].theTime,
+		theTrophy:players[p1].trophy_no,
+		oppTrophy:players[p2].trophy_no,
+		theUser:players[p1].nameOfUser,
+		oppUser:players[p2].nameOfUser,
+		myLevel:players[p1].level,
+		winningTrophy:allGames.activeGames[isRoom].firstWinTrophy,
+		OpponentsTetrisBackgroundProperty:players[p2].backgroundPropertyOfAllBlocks,
+		theCriticalTime:allGames.activeGames[isRoom].criticalTime,
+		theFinalTime:allGames.activeGames[isRoom].finalTime});
+  }
+}
+
+function joinTheRoom(k,roomName){
+  var theID = k;
+  var theRoom = roomName;
+  theID.join(theRoom);
+}
+
+function leaveTheRoom(k){
+  var theID = k;
+  var theSocket = allUsers.activeUsers[theID];
+  var theRoom = players[theID].myRoom;
+  theSocket.leave(theRoom);    
+}
+
+function sendTetrisDataToClient(k){ 
+  if(Object.keys(players[k]).length != 0){
+	// get the opponent ID
+	var opID = players[k].opponentID;
+	var theRoom = players[k].myRoom; 
+	
+	allUsers.activeUsers[k].emit('updateTheTetrisDetails',{tetrisBackgroundProperty:players[k].backgroundPropertyOfAllBlocks,
+		tetrisPreviewProperty:players[k].backgroundPropertyOfNextBlocks,
+		currentLevel:allGames.activeGames[theRoom].gameLevel,
+		timer:allGames.activeGames[theRoom].theTime,
+		theTrophy:players[k].trophy_no,
+		oppTrophy:players[opID].trophy_no,
+		theUser:players[k].nameOfUser,
+		oppUser:players[opID].nameOfUser,
+		myLevel:players[k].level,
+		//myLevel:8,
+		oppLevel:players[opID].level,
+		//oppLevel:8,
+		winningTrophy:elo.newRatingIfWon(parseInt(players[k].trophy_no),parseInt(players[opID].trophy_no))-players[k].trophy_no,
+		OpponentsTetrisBackgroundProperty:players[opID].backgroundPropertyOfAllBlocks,
+		rowCompletion:players[k].rowCompletionFlag,
+		rowAddition:players[k].rowAdditionFlag,
+		theCriticalTime:allGames.activeGames[theRoom].criticalTime,
+		rowsAdded:players[k].rowsAdded,
+		theFinalTime:allGames.activeGames[theRoom].finalTime
+	});
+	
+	if(players[k].rowsAddedTimeCountFlag){
+		players[k].rowsAddedTimeCount++;
+		if(players[k].rowsAddedTimeCount == 12){
+			//console.log("inside players[k].rowsAddedTimeCount == 12");
+			players[k].rowsAddedTimeCount=0;
+			players[k].rowsAdded = 0;
+			players[k].rowsAddedTimeCountFlag = false;
+		}
+	}	
+	players[k].rowCompletionFlag = false;
+	players[k].rowAdditionFlag = false;
+  }
+}
+
+/*function assignOpponentsID(socketId_temp,key){
+  var firstID = socketId_temp;
+  var secondID = key;
+  players[firstID].opponentID = secondID;
+  players[secondID].opponentID = firstID;   
+}*/
+
+function roomFormation(socketId1,socketId2){
+	var sID1 = socketId1;
+	var sID2 = socketId2;
+	
+	players[sID1].isMultiplayer = true;
+	players[sID2].isMultiplayer = true;
+	
+	console.log("inside room formation");
+	console.log(players[sID1]);
+	console.log(players[sID2]);
+	
+	players[sID1].opponentID = sID2;
+	players[sID2].opponentID = sID1; 
+	
+	//assignOpponentsID(sID1,sID2);
+	totalRooms++;
+	
+	var mySoc = allUsers.activeUsers[sID1];
+	var roomName = "Room"+totalRooms;
+	var opponentsSocket = allUsers.activeUsers[sID2];
+
+	//1st
+	players[sID1].myRoom = roomName;
+	players[sID2].myRoomNo = totalRooms;
+	
+	//2nd
+	players[sID2].myRoom = roomName;
+	players[sID2].myRoomNo = totalRooms;
+
+	makeActiveGamesDictionary(roomName,totalRooms,sID1,sID2);
+
+	players[sID1].isFirstPlayer = true;      
+
+	joinTheRoom(mySoc,roomName);
+	joinTheRoom(opponentsSocket,roomName);    
+}
+
+//finding currently playing users for spectation purposes
+//had to modify this function
+function finding_opponent(){
+	var items = Object.keys(allGames.activeGames).map(function(key) {
+		return [allGames.activeGames[key].firstPlayer, 
+		allGames.activeGames[key].secondPlayer,
+		players[allGames.activeGames[key].firstPlayer].nameOfUser,
+		players[allGames.activeGames[key].secondPlayer].nameOfUser,
+		key,
+		players[allGames.activeGames[key].firstPlayer].trophy_no,
+		players[allGames.activeGames[key].secondPlayer].trophy_no
+    ]//};//.sort();
+  });
+  return items;//.sort();
+}
+
+function checkkeystatus(k){
+  if (keys_stat['rotateButton']==true) {
+	  rotateButton(k);
+  }
+  if (keys_stat['leftButton']==true){
+	  leftButton(k);
+  }
+  if (keys_stat['rightButton']==true) { 
+	  rightButton(k);
+  }
+  if(!isEmpty(players[k])){
+	  if(players[k].previousDropClick != keys_stat['dropButton']){
+		if (keys_stat['dropButton'] ==true) {
+			dropButtonPressed(k);
+		}
+		if (keys_stat['dropButton'] ==false){
+			dropButtonReleased(k);
+		}
+		players[k].previousDropClick = keys_stat['dropButton'];
+	  }
+  }
+}
+
+function create_game(k){	
+  players[k]={  
+    //multiplayerInfo:{
+      mySocket:null,
+      opponentID:null,
+      myRoom:null,
+      myRoomNo:null,
+      isFirstPlayer:false,
+    //},
+	rightMostX:null,
+    rightMostY:null,
+    leftMostX:null,
+    leftMostY:null,
+    bottomMostX:null,
+    bottomMostY:null,
+    mVar:null,
+    cacheLeftMostX:null,
+    cacheLeftMostY:null,
+    cacheRightMostX:null,
+    cacheRightMostY:null,
+    cacheBottomMostX:null,
+    cacheBottomMostY:null,
+    cacheShapeType:null,
+    nextPiece:null,
+    nextColor:null,
+    shapeType:null,
+    shapeStage:0,
+    shapePos:[[0,0],[0,1],[0,2],[0,3]],
+    cachePos : [[0,0],[0,0],[0,0],[0,0]],
+    nextShapePos  : [[0,0],[0,0],[0,0],[0,0]],
+    Score  :0,
+    anyColor :"blue",
+    occupiedPropertiesOfAllBlocks :[],
+    backgroundPropertyOfAllBlocks :[],
+    backgroundPropertyOfNextBlocks:[],
+    cacheShapeStage:null,
+    timeSinceStart: 0,
+    currentSpeed:null,
+    username:allUsers.activeUsers[k].dbID,
+	nameOfUser:allUsers.activeUsers[k].nameUser,
+    isMultiplayer:false,
+    timeElapsed:0,
+    timeVar:null,
+    currentlyDrop:false,
+    countOfDataSend:0,
+    previousDropClick:false,
+    replayMode:false,
+    shapesCount:0,
+    trophy_no:allUsers.activeUsers[k].trophy_no,
+	level:allUsers.activeUsers[k].level,
+	moveBoxCount:0,
+	previousMoveBoxCount:0,
+	previousControlsArray:[],
+	rowCompletionFlag:false,
+	rowAdditionFlag:false,
+	swipedDown:false,
+	replayControlStatus:true,
+	rowsAdded:0,
+	rowsAddedTimeCount:0,
+	rowsAddedTimeCountFlag:false
+   };
+}
+
+  function setOccupyPropertyOfBlocks(k){
+    for(var i=0 ;i<gridHeight;i++){
+      var data = [];
+      for(var j=0;j<gridWidth;j++){
+        data.push(0);
+      }
+      players[k].occupiedPropertiesOfAllBlocks.push(data);
+    }
+  }
+  
+  function setBackgroundPropertyOfBlocks(k){
+    for(var i=0 ;i<gridHeight;i++){
+      var data2 = [];
+      for(var j=0;j<gridWidth;j++){
+        data2.push(defaultBackgroundColor);
+      }
+      players[k].backgroundPropertyOfAllBlocks.push(data2);
+    }
+  }
+  
+  function setBackgroundPropertyOfNextBlocks(k){
+    for(var i=0 ;i<previewGridHeight ;i++){
+      var data2 = [];
+      for(var j=0;j<previewGridWidth;j++){
+        data2.push(defaultBackgroundColor);
+      }
+      players[k].backgroundPropertyOfNextBlocks.push(data2);
+    }
+  }
+  
+  function resetPlayer(k){
+    for(var i=0;i<gridHeight;i++){
+      for(var j=0;j<gridWidth;j++){
+        players[k].occupiedPropertiesOfAllBlocks[i][j] = 0;
+        players[k].backgroundPropertyOfAllBlocks[i][j] = defaultBackgroundColor;
+      }
+    }
+	
+    for(var i=0;i<previewGridHeight;i++){
+      for(var j=0;j<previewGridWidth;j++){
+        players[k].backgroundPropertyOfNextBlocks[i][j] = defaultBackgroundColor;
+      }
+    }
+	
+    players[k].Score  = 0;
+    players[k].currentSpeed = blockSpeed;
+    players[k].timeSinceStart = 0;
+    clearTheInterval(players[k].mVar);
+  }
+  
+  function updateOccupyPropertyOfBlocks(x,y,val,k){
+    players[k].occupiedPropertiesOfAllBlocks[x][y]= val;
+  }
+  
+  function updateBackgroundPropertyOfBlocks(x1,y1,val_temp,k){
+    players[k].backgroundPropertyOfAllBlocks[x1][y1] = val_temp;
+  }
+  
+  function updateBackgroundPropertyOfNextBlocks(x2,y2,val2,k){
+    players[k].backgroundPropertyOfNextBlocks[x2][y2] = val2;
+  }
+  
+  //erases currentraseShape()
+  function eraseShape(k){
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[0][0],players[k].shapePos[0][1],defaultBackgroundColor,k);
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[1][0],players[k].shapePos[1][1],defaultBackgroundColor,k);
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[2][0],players[k].shapePos[2][1],defaultBackgroundColor,k);
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[3][0],players[k].shapePos[3][1],defaultBackgroundColor,k);
+  }
+  
+  //colors current shape
+  function colorTheShape(k){
+    //players[k].anyColor is random color generated by function players[k].randomColorGenerator
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[0][0],players[k].shapePos[0][1],players[k].anyColor,k);
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[1][0],players[k].shapePos[1][1],players[k].anyColor,k);
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[2][0],players[k].shapePos[2][1],players[k].anyColor,k);
+    updateBackgroundPropertyOfBlocks(players[k].shapePos[3][0],players[k].shapePos[3][1],players[k].anyColor,k);
+  }
+  
+  //erase next shape
+  function eraseNextShape(k){
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [0][0],players[k].nextShapePos [0][1],defaultBackgroundColor,k);
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [1][0],players[k].nextShapePos [1][1],defaultBackgroundColor,k);
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [2][0],players[k].nextShapePos [2][1],defaultBackgroundColor,k);
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [3][0],players[k].nextShapePos [3][1],defaultBackgroundColor,k);
+  }
+  
+  //colors next shape
+  function colorNextShape(k){
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [0][0],players[k].nextShapePos [0][1],players[k].nextColor,k);
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [1][0],players[k].nextShapePos [1][1],players[k].nextColor,k);
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [2][0],players[k].nextShapePos [2][1],players[k].nextColor,k);
+    updateBackgroundPropertyOfNextBlocks(players[k].nextShapePos [3][0],players[k].nextShapePos [3][1],players[k].nextColor,k);
+  }
+  
+  function moveNextShapeToInitialPos(k){  
+    switch(players[k].nextPiece){
+      case 'i':
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 1;
+            players[k].nextShapePos [2][0]= 1;
+            players[k].nextShapePos [3][0]= 1;
+            
+            players[k].nextShapePos [0][1]= 0;
+            players[k].nextShapePos [1][1]= 1;
+            players[k].nextShapePos [2][1]= 2;
+            players[k].nextShapePos [3][1]= 3;
+              
+            break;
+              
+      case 'j':
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 2;
+            players[k].nextShapePos [2][0]= 3;
+            players[k].nextShapePos [3][0]= 3;
+            
+            players[k].nextShapePos [0][1]= 2;
+            players[k].nextShapePos [1][1]= 2;
+            players[k].nextShapePos [2][1]= 2;
+            players[k].nextShapePos [3][1]= 1;
+              
+            break;
+            
+      case 'l': 
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 2;
+            players[k].nextShapePos [2][0]= 3;
+            players[k].nextShapePos [3][0]= 3;
+            
+            players[k].nextShapePos [0][1]= 1;
+            players[k].nextShapePos [1][1]= 1;
+            players[k].nextShapePos [2][1]= 1;
+            players[k].nextShapePos [3][1]= 2;
+              
+            break;
+            
+      case 'o': 
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 1;
+            players[k].nextShapePos [2][0]= 2;
+            players[k].nextShapePos [3][0]= 2;
+            
+            players[k].nextShapePos [0][1]= 1;
+            players[k].nextShapePos [1][1]= 2;
+            players[k].nextShapePos [2][1]= 1;
+            players[k].nextShapePos [3][1]= 2;
+              
+            break;
+      
+      case 's':
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 1;
+            players[k].nextShapePos [2][0]= 2;
+            players[k].nextShapePos [3][0]= 2;
+            
+            players[k].nextShapePos [0][1]= 2;
+            players[k].nextShapePos [1][1]= 3;
+            players[k].nextShapePos [2][1]= 1;
+            players[k].nextShapePos [3][1]= 2;
+              
+            break;
+      
+      case 't':   
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 1;
+            players[k].nextShapePos [2][0]= 1;
+            players[k].nextShapePos [3][0]= 2;
+            
+            players[k].nextShapePos [0][1]= 0;
+            players[k].nextShapePos [1][1]= 1;
+            players[k].nextShapePos [2][1]= 2;
+            players[k].nextShapePos [3][1]= 1;
+              
+            break;
+      
+      case 'z':
+            players[k].nextShapePos [0][0]= 1;
+            players[k].nextShapePos [1][0]= 1;
+            players[k].nextShapePos [2][0]= 2;
+            players[k].nextShapePos [3][0]= 2;
+            
+            players[k].nextShapePos [0][1]= 1;
+            players[k].nextShapePos [1][1]= 2;
+            players[k].nextShapePos [2][1]= 2;
+            players[k].nextShapePos [3][1]= 3;
+              
+            break;
+    }
+  }
+  
+  function randomBlockGenerator(k){
+      var any = Math.floor(Math.random()*(randomColors.length));
+      players[k].nextColor = randomColors[any];
+	  players[k].nextPiece = pieces[any];
+	  players[k].shapesCount++;
+  }
+  
+  //checks whether a block is occupied or not
+  function isOccupied(x,y,k){
+    if(x<0 || x>=gridHeight || y<0 || y>=gridWidth)
+      return true;
+    var occupiedStatus = players[k].occupiedPropertiesOfAllBlocks[x][y];
+    if(occupiedStatus == 0)
+      return false;
+    else
+      return true;
+  }
+  
+  //sets the property of all blocks of current shape
+  //where it has resided to occupy
+  function makeBlockOccupied(k){
+    updateOccupyPropertyOfBlocks(players[k].shapePos[0][0],players[k].shapePos[0][1],1,k);
+    updateOccupyPropertyOfBlocks(players[k].shapePos[1][0],players[k].shapePos[1][1],1,k);
+    updateOccupyPropertyOfBlocks(players[k].shapePos[2][0],players[k].shapePos[2][1],1,k);
+    updateOccupyPropertyOfBlocks(players[k].shapePos[3][0],players[k].shapePos[3][1],1,k);
+  }
+  
+  //sets the property of all blocks of current shape
+  //where it has resided to Un-occupy
+  function makeBlockUnoccupied(k){
+    updateOccupyPropertyOfBlocks(players[k].shapePos[0][0],players[k].shapePos[0][1],0,k);
+    updateOccupyPropertyOfBlocks(players[k].shapePos[1][0],players[k].shapePos[1][1],0,k);
+    updateOccupyPropertyOfBlocks(players[k].shapePos[2][0],players[k].shapePos[2][1],0,k);
+    updateOccupyPropertyOfBlocks(players[k].shapePos[3][0],players[k].shapePos[3][1],0,k);
+  }
+  
+  //initializes the positions of shape that is going to 
+  //enter tetris
+  function moveShapeToInitialPos(k){  
+    switch(players[k].shapeType){
+      case 'i':
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 0;
+            players[k].shapePos[2][0]= 0;
+            players[k].shapePos[3][0]= 0;
+            
+            players[k].shapePos[0][1]= 5;
+            players[k].shapePos[1][1]= 6;
+            players[k].shapePos[2][1]= 7;
+            players[k].shapePos[3][1]= 8;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+              
+      case 'j':
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 1;
+            players[k].shapePos[2][0]= 2;
+            players[k].shapePos[3][0]= 2;
+            
+            players[k].shapePos[0][1]= 5;
+            players[k].shapePos[1][1]= 5;
+            players[k].shapePos[2][1]= 5;
+            players[k].shapePos[3][1]= 4;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+            
+      case 'l': 
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 1;
+            players[k].shapePos[2][0]= 2;
+            players[k].shapePos[3][0]= 2;
+            
+            players[k].shapePos[0][1]= 4;
+            players[k].shapePos[1][1]= 4;
+            players[k].shapePos[2][1]= 4;
+            players[k].shapePos[3][1]= 5;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+            
+      case 'o': 
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 0;
+            players[k].shapePos[2][0]= 1;
+            players[k].shapePos[3][0]= 1;
+            
+            players[k].shapePos[0][1]= 4;
+            players[k].shapePos[1][1]= 5;
+            players[k].shapePos[2][1]= 5;
+            players[k].shapePos[3][1]= 4;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+      
+      case 's':
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 0;
+            players[k].shapePos[2][0]= 1;
+            players[k].shapePos[3][0]= 1;
+            
+            players[k].shapePos[0][1]= 4;
+            players[k].shapePos[1][1]= 5;
+            players[k].shapePos[2][1]= 3;
+            players[k].shapePos[3][1]= 4;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+      
+      case 't':   
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 0;
+            players[k].shapePos[2][0]= 0;
+            players[k].shapePos[3][0]= 1;
+            
+            players[k].shapePos[0][1]= 4;
+            players[k].shapePos[1][1]= 5;
+            players[k].shapePos[2][1]= 6;
+            players[k].shapePos[3][1]= 5;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+      
+      case 'z':
+            players[k].shapeStage = 0;
+            players[k].shapePos[0][0]= 0;
+            players[k].shapePos[1][0]= 0;
+            players[k].shapePos[2][0]= 1;
+            players[k].shapePos[3][0]= 1;
+            
+            players[k].shapePos[0][1]= 4;
+            players[k].shapePos[1][1]= 5;
+            players[k].shapePos[2][1]= 5;
+            players[k].shapePos[3][1]= 6;
+              
+            updateLeftRightBottomVariables(k);
+            break;
+    }
+  }
+  
+  //gets the leftmost ,rightmost and bottommost blocks
+  //of current shape
+  function updateLeftRightBottomVariables(k){
+    switch(players[k].shapeType){
+      case 'i':   
+            players[k].rightMostX = players[k].shapePos[3][0];
+            players[k].rightMostY = players[k].shapePos[3][1];
+            
+            players[k].leftMostX = players[k].shapePos[0][0];
+            players[k].leftMostY = players[k].shapePos[0][1];
+                    
+            players[k].bottomMostX = players[k].shapePos[3][0];
+            players[k].bottomMostY = players[k].shapePos[3][1];
+            break;
+            
+      case 'j': 
+            if(players[k].shapeStage == 0){
+              players[k].rightMostX = players[k].shapePos[2][0];
+              players[k].rightMostY = players[k].shapePos[2][1];
+              
+              players[k].leftMostX = players[k].shapePos[3][0];
+              players[k].leftMostY = players[k].shapePos[3][1];
+                      
+              players[k].bottomMostX = players[k].shapePos[3][0];
+              players[k].bottomMostY = players[k].shapePos[3][1];
+            }
+            else if(players[k].shapeStage == 1){
+                players[k].rightMostX = players[k].shapePos[3][0];
+                players[k].rightMostY = players[k].shapePos[3][1];
+              
+                players[k].leftMostX = players[k].shapePos[0][0];
+                players[k].leftMostY = players[k].shapePos[0][1];
+                        
+                players[k].bottomMostX = players[k].shapePos[3][0];
+                players[k].bottomMostY = players[k].shapePos[3][1];
+              }
+              else if(players[k].shapeStage == 2){
+                  players[k].rightMostX = players[k].shapePos[1][0];
+                  players[k].rightMostY = players[k].shapePos[1][1];
+                
+                  players[k].leftMostX = players[k].shapePos[0][0];
+                  players[k].leftMostY = players[k].shapePos[0][1];
+                          
+                  players[k].bottomMostX = players[k].shapePos[3][0];
+                  players[k].bottomMostY = players[k].shapePos[3][1];
+                }
+                else if(players[k].shapeStage == 3){
+                    players[k].rightMostX = players[k].shapePos[2][0];
+                    players[k].rightMostY = players[k].shapePos[2][1];
+                  
+                    players[k].leftMostX = players[k].shapePos[0][0];
+                    players[k].leftMostY = players[k].shapePos[0][1];
+                            
+                    players[k].bottomMostX = players[k].shapePos[3][0];
+                    players[k].bottomMostY = players[k].shapePos[3][1];
+                  }
+            break;
+      
+      case 'l': 
+			if(players[k].shapeStage == 0){
+              players[k].rightMostX = players[k].shapePos[3][0];
+              players[k].rightMostY = players[k].shapePos[3][1];
+            
+              players[k].leftMostX = players[k].shapePos[2][0];
+              players[k].leftMostY = players[k].shapePos[2][1];
+                      
+              players[k].bottomMostX = players[k].shapePos[3][0];
+              players[k].bottomMostY = players[k].shapePos[3][1];
+            }
+            else if(players[k].shapeStage == 1){
+                players[k].rightMostX = players[k].shapePos[2][0];
+                players[k].rightMostY = players[k].shapePos[2][1];
+            
+                players[k].leftMostX = players[k].shapePos[0][0];
+                players[k].leftMostY = players[k].shapePos[0][1];
+                      
+                players[k].bottomMostX = players[k].shapePos[3][0];
+                players[k].bottomMostY = players[k].shapePos[3][1];
+              }
+              else if(players[k].shapeStage == 2){
+                  players[k].rightMostX = players[k].shapePos[1][0];
+                  players[k].rightMostY = players[k].shapePos[1][1];
+              
+                  players[k].leftMostX = players[k].shapePos[0][0];
+                  players[k].leftMostY = players[k].shapePos[0][1];
+                        
+                  players[k].bottomMostX = players[k].shapePos[3][0];
+                  players[k].bottomMostY = players[k].shapePos[3][1];
+                }
+                else if(players[k].shapeStage == 3){
+                    players[k].rightMostX = players[k].shapePos[0][0];
+                    players[k].rightMostY = players[k].shapePos[0][1];
+                
+                    players[k].leftMostX = players[k].shapePos[1][0];
+                    players[k].leftMostY = players[k].shapePos[1][1];
+                          
+                    players[k].bottomMostX = players[k].shapePos[3][0];
+                    players[k].bottomMostY = players[k].shapePos[3][1];
+                  }
+            break;
+      
+      case 'o':
+            players[k].rightMostX = players[k].shapePos[2][0];
+            players[k].rightMostY = players[k].shapePos[2][1];
+          
+            players[k].leftMostX = players[k].shapePos[3][0];
+            players[k].leftMostY = players[k].shapePos[3][1];
+                    
+            players[k].bottomMostX = players[k].shapePos[3][0];
+            players[k].bottomMostY = players[k].shapePos[3][1];
+            break;
+            
+      case 's':
+            if(players[k].shapeStage == 0){
+              players[k].rightMostX = players[k].shapePos[1][0];
+              players[k].rightMostY = players[k].shapePos[1][1];
+          
+              players[k].leftMostX = players[k].shapePos[2][0];
+              players[k].leftMostY = players[k].shapePos[2][1];
+                    
+              players[k].bottomMostX = players[k].shapePos[3][0];
+              players[k].bottomMostY = players[k].shapePos[3][1];
+            }
+            else if(players[k].shapeStage == 1){
+                players[k].rightMostX = players[k].shapePos[2][0];
+                players[k].rightMostY = players[k].shapePos[2][1];
+            
+                players[k].leftMostX = players[k].shapePos[1][0];
+                players[k].leftMostY = players[k].shapePos[1][1];
+                      
+                players[k].bottomMostX = players[k].shapePos[3][0];
+                players[k].bottomMostY = players[k].shapePos[3][1];
+              }
+              else if(players[k].shapeStage == 2){
+                  players[k].rightMostX = players[k].shapePos[1][0];
+                  players[k].rightMostY = players[k].shapePos[1][1];
+              
+                  players[k].leftMostX = players[k].shapePos[2][0];
+                  players[k].leftMostY = players[k].shapePos[2][1];
+                        
+                  players[k].bottomMostX = players[k].shapePos[3][0];
+                  players[k].bottomMostY = players[k].shapePos[3][1];
+                }
+                else if(players[k].shapeStage == 3){
+                    players[k].rightMostX = players[k].shapePos[2][0];
+                    players[k].rightMostY = players[k].shapePos[2][1];
+                
+                    players[k].leftMostX = players[k].shapePos[1][0];
+                    players[k].leftMostY = players[k].shapePos[1][1];
+                          
+                    players[k].bottomMostX = players[k].shapePos[3][0];
+                    players[k].bottomMostY = players[k].shapePos[3][1];
+                  }
+            break;
+      
+      case 't':
+            if(players[k].shapeStage == 0){
+              players[k].rightMostX = players[k].shapePos[2][0];
+              players[k].rightMostY = players[k].shapePos[2][1];
+            
+              players[k].leftMostX = players[k].shapePos[0][0];
+              players[k].leftMostY = players[k].shapePos[0][1];
+                      
+              players[k].bottomMostX = players[k].shapePos[3][0];
+              players[k].bottomMostY = players[k].shapePos[3][1];
+            }
+            else if(players[k].shapeStage == 1){
+                players[k].rightMostX = players[k].shapePos[2][0];
+                players[k].rightMostY = players[k].shapePos[2][1];
+                
+				players[k].leftMostX =  players[k].shapePos[0][0];
+                players[k].leftMostY =  players[k].shapePos[0][1];
+                      
+                players[k].bottomMostX = players[k].shapePos[3][0];
+                players[k].bottomMostY = players[k].shapePos[3][1];
+              }
+            else if(players[k].shapeStage == 2){
+                  players[k].rightMostX = players[k].shapePos[3][0];
+                  players[k].rightMostY = players[k].shapePos[3][1];
+              
+                  players[k].leftMostX = players[k].shapePos[1][0];
+                  players[k].leftMostY = players[k].shapePos[1][1];
+                        
+                  players[k].bottomMostX = players[k].shapePos[2][0];
+                  players[k].bottomMostY = players[k].shapePos[2][1];
+                }
+                else if(players[k].shapeStage == 3){
+                    players[k].rightMostX = players[k].shapePos[2][0];
+                    players[k].rightMostY = players[k].shapePos[2][1];
+                
+                    players[k].leftMostX = players[k].shapePos[1][0];
+                    players[k].leftMostY = players[k].shapePos[1][1];
+                          
+                    players[k].bottomMostX = players[k].shapePos[3][0];
+                    players[k].bottomMostY = players[k].shapePos[3][1];
+                  }
+            break;
+            
+      case 'z':
+            if(players[k].shapeStage == 0){
+              players[k].rightMostX = players[k].shapePos[3][0];
+              players[k].rightMostY = players[k].shapePos[3][1];
+            
+              players[k].leftMostX = players[k].shapePos[0][0];
+              players[k].leftMostY = players[k].shapePos[0][1];
+                      
+              players[k].bottomMostX = players[k].shapePos[3][0];
+              players[k].bottomMostY = players[k].shapePos[3][1];
+            }
+            else if(players[k].shapeStage == 1){
+                players[k].rightMostX = players[k].shapePos[2][0];
+                players[k].rightMostY = players[k].shapePos[2][1];
+            
+                players[k].leftMostX = players[k].shapePos[1][0];
+                players[k].leftMostY = players[k].shapePos[1][1];
+                      
+                players[k].bottomMostX = players[k].shapePos[3][0];
+                players[k].bottomMostY = players[k].shapePos[3][1];
+              }
+              else if(players[k].shapeStage == 2){
+                  players[k].rightMostX = players[k].shapePos[3][0];
+                  players[k].rightMostY = players[k].shapePos[3][1];
+              
+                  players[k].leftMostX = players[k].shapePos[0][0];
+                  players[k].leftMostY = players[k].shapePos[0][1];
+                        
+                  players[k].bottomMostX = players[k].shapePos[2][0];
+                  players[k].bottomMostY = players[k].shapePos[2][1];
+                }
+                else if(players[k].shapeStage == 3){
+                    players[k].rightMostX = players[k].shapePos[2][0];
+                    players[k].rightMostY = players[k].shapePos[2][1];
+						
+                    players[k].leftMostX = players[k].shapePos[1][0];
+                    players[k].leftMostY = players[k].shapePos[1][1];
+                          
+                    players[k].bottomMostX = players[k].shapePos[3][0];
+                    players[k].bottomMostY = players[k].shapePos[3][1];
+                  }
+            break;
+    }
+  }
+  
+  //sets the positions of current shape to its
+  //next rotation stage
+  function moveShapeToNextRotationStage(k){
+    switch(players[k].shapeType){
+      case 'i':
+            if(players[k].shapeStage == 0){
+              //1st block pos
+              players[k].shapePos[0][0] = players[k].shapePos[0][0]+1;
+              players[k].shapePos[0][1] = players[k].shapePos[0][1]-1;
+                
+              //2nd block pos
+              players[k].shapePos[1][0] = players[k].shapePos[1][0];
+              players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                
+              //3rd block pos
+              players[k].shapePos[2][0] = players[k].shapePos[2][0]-1;
+              players[k].shapePos[2][1] = players[k].shapePos[2][1]+1;
+                
+              //4th block pos
+              players[k].shapePos[3][0] = players[k].shapePos[3][0]-2;
+              players[k].shapePos[3][1] = players[k].shapePos[3][1]+2;
+            }
+            
+            else if(players[k].shapeStage == 1){
+                //1st block pos
+                players[k].shapePos[0][0] = players[k].shapePos[0][0]-1;
+                players[k].shapePos[0][1] = players[k].shapePos[0][1]+2 ;
+                
+                //2nd block pos
+                players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+                //3rd block pos
+                players[k].shapePos[2][0] = players[k].shapePos[2][0]+1;
+                players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+                //4th block pos
+                players[k].shapePos[3][0] = players[k].shapePos[3][0]+2;
+                players[k].shapePos[3][1] = players[k].shapePos[3][1]-1;
+              }
+              else if(players[k].shapeStage == 2){ 
+                  //1st block pos
+                  players[k].shapePos[0][0] = players[k].shapePos[0][0]+2;
+                  players[k].shapePos[0][1] = players[k].shapePos[0][1]-2;
+                
+                  //2nd block pos
+                  players[k].shapePos[1][0] = players[k].shapePos[1][0]+1;
+                  players[k].shapePos[1][1] = players[k].shapePos[1][1]-1;
+                
+                  //3rd block pos
+                  players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                  players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+                  //4th block pos
+                  players[k].shapePos[3][0] = players[k].shapePos[3][0]-1;
+                  players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+                }
+                else if(players[k].shapeStage == 3){
+                    //1st block pos
+                    players[k].shapePos[0][0] = players[k].shapePos[0][0]-2;
+                    players[k].shapePos[0][1] = players[k].shapePos[0][1]+1;
+                  
+                    //2nd block pos
+                    players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+                    players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                  
+                    //3rd block pos
+                    players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                    players[k].shapePos[2][1] = players[k].shapePos[2][1]-1;
+                  
+                    //4th block pos
+                    players[k].shapePos[3][0] = players[k].shapePos[3][0]+1;
+                    players[k].shapePos[3][1] = players[k].shapePos[3][1]-2;
+                  }
+            updateLeftRightBottomVariables(k);
+            break;
+            
+      case 'j':
+            if(players[k].shapeStage == 0){
+              //1st block pos
+              players[k].shapePos[0][0] = players[k].shapePos[0][0]-1;
+              players[k].shapePos[0][1] = players[k].shapePos[0][1]+2;
+                
+              //2nd block pos
+              players[k].shapePos[1][0] = players[k].shapePos[1][0];
+              players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+              //3rd block pos
+              players[k].shapePos[2][0] = players[k].shapePos[2][0]+1;
+              players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+              //4th block pos
+              players[k].shapePos[3][0] = players[k].shapePos[3][0];
+              players[k].shapePos[3][1] = players[k].shapePos[3][1]-1;
+            }
+            
+            else if(players[k].shapeStage == 1){
+                //1st block pos
+                players[k].shapePos[0][0] = players[k].shapePos[0][0]+1;
+                players[k].shapePos[0][1] = players[k].shapePos[0][1]-1 ;
+                
+                //2nd block pos
+                players[k].shapePos[1][0] = players[k].shapePos[1][0]+1;
+                players[k].shapePos[1][1] = players[k].shapePos[1][1]-1;
+                
+                //3rd block pos
+                players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+                //4th block pos
+                players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                players[k].shapePos[3][1] = players[k].shapePos[3][1]+2;
+              }
+              else if(players[k].shapeStage == 2){ 
+                  //1st block pos
+                  players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                  players[k].shapePos[0][1] = players[k].shapePos[0][1];
+                
+                  //2nd block pos
+                  players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+                  players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+                  //3rd block pos
+                  players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                  players[k].shapePos[2][1] = players[k].shapePos[2][1]-1;
+                
+                  //4th block pos
+                  players[k].shapePos[3][0] = players[k].shapePos[3][0]+1;
+                  players[k].shapePos[3][1] = players[k].shapePos[3][1]-2;
+                }
+                else if(players[k].shapeStage == 3){
+                    //1st block pos
+                    players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                    players[k].shapePos[0][1] = players[k].shapePos[0][1]-1;
+                  
+                    //2nd block pos
+                    players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                    players[k].shapePos[1][1] = players[k].shapePos[1][1]-1;
+                  
+                    //3rd block pos
+                    players[k].shapePos[2][0] = players[k].shapePos[2][0]-1;
+                    players[k].shapePos[2][1] = players[k].shapePos[2][1]+1;
+                  
+                    //4th block pos
+                    players[k].shapePos[3][0] = players[k].shapePos[3][0]-1;
+                    players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+                  }
+            updateLeftRightBottomVariables(k);
+            break;
+      
+      case 'l': 
+            if(players[k].shapeStage == 0){
+              //1st block pos
+              players[k].shapePos[0][0] = players[k].shapePos[0][0]-1;
+              players[k].shapePos[0][1] = players[k].shapePos[0][1]-1 ;
+                
+              //2nd block pos
+              players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+              players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+              //3rd block pos
+              players[k].shapePos[2][0] = players[k].shapePos[2][0];
+              players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+              //4th block pos
+              players[k].shapePos[3][0] = players[k].shapePos[3][0];
+              players[k].shapePos[3][1] = players[k].shapePos[3][1];
+            }
+            
+            else if(players[k].shapeStage == 1){
+                //1st block pos
+                players[k].shapePos[0][0] = players[k].shapePos[0][0]+1;
+                players[k].shapePos[0][1] = players[k].shapePos[0][1] ;
+                
+                //2nd block pos
+                players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+                //3rd block pos
+                players[k].shapePos[2][0] = players[k].shapePos[2][0]-1;
+                players[k].shapePos[2][1] = players[k].shapePos[2][1]+2;
+                
+                //4th block pos
+                players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                players[k].shapePos[3][1] = players[k].shapePos[3][1]-1;
+              }
+              else if(players[k].shapeStage == 2){ 
+                  //1st block pos
+                  players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                  players[k].shapePos[0][1] = players[k].shapePos[0][1];
+                
+                  //2nd block pos
+                  players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                  players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                
+                  //3rd block pos
+                  players[k].shapePos[2][0] = players[k].shapePos[2][0]+1;
+                  players[k].shapePos[2][1] = players[k].shapePos[2][1]-1;
+                
+                  //4th block pos
+                  players[k].shapePos[3][0] = players[k].shapePos[3][0]+1;
+                  players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+                }
+                else if(players[k].shapeStage == 3){
+                    //1st block pos
+                    players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                    players[k].shapePos[0][1] = players[k].shapePos[0][1]+1;
+                  
+                    //2nd block pos
+                    players[k].shapePos[1][0] = players[k].shapePos[1][0]+1;
+                    players[k].shapePos[1][1] = players[k].shapePos[1][1]-2;
+                  
+                    //3rd block pos
+                    players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                    players[k].shapePos[2][1] = players[k].shapePos[2][1]-1;
+                  
+                    //4th block pos
+                    players[k].shapePos[3][0] = players[k].shapePos[3][0]-1;
+                    players[k].shapePos[3][1] = players[k].shapePos[3][1];
+                  }
+            updateLeftRightBottomVariables(k);
+            
+            break;
+      
+      case 'o': 
+            break;
+            
+      case 's': 
+            if(players[k].shapeStage == 0){
+              //1st block pos
+              players[k].shapePos[0][0] = players[k].shapePos[0][0];
+              players[k].shapePos[0][1] = players[k].shapePos[0][1] ;
+                
+              //2nd block pos
+              players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+              players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+              //3rd block pos
+              players[k].shapePos[2][0] = players[k].shapePos[2][0];
+              players[k].shapePos[2][1] = players[k].shapePos[2][1]-2;
+                
+              //4th block pos
+              players[k].shapePos[3][0] = players[k].shapePos[3][0]-1;
+              players[k].shapePos[3][1] = players[k].shapePos[3][1]-1;
+            }
+            else if(players[k].shapeStage == 1){
+                //1st block pos
+                players[k].shapePos[0][0] = players[k].shapePos[0][0]-1;
+                players[k].shapePos[0][1] = players[k].shapePos[0][1] ;
+                
+                //2nd block pos
+                players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                players[k].shapePos[1][1] = players[k].shapePos[1][1]-1;
+                
+                //3rd block pos
+                players[k].shapePos[2][0] = players[k].shapePos[2][0]-1;
+                players[k].shapePos[2][1] = players[k].shapePos[2][1]+2;
+                
+                //4th block pos
+                players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+              }
+              else if(players[k].shapeStage == 2){ 
+                  //1st block pos
+                  players[k].shapePos[0][0] = players[k].shapePos[0][0]+1;
+                  players[k].shapePos[0][1] = players[k].shapePos[0][1]+1;
+                
+                  //2nd block pos
+                  players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                  players[k].shapePos[1][1] = players[k].shapePos[1][1]+2;
+                
+                  //3rd block pos
+                  players[k].shapePos[2][0] = players[k].shapePos[2][0]+1;
+                  players[k].shapePos[2][1] = players[k].shapePos[2][1]-1;
+                
+                  //4th block pos
+                  players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                  players[k].shapePos[3][1] = players[k].shapePos[3][1];
+                }
+                else if(players[k].shapeStage == 3){
+                    //1st block pos
+                    players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                    players[k].shapePos[0][1] = players[k].shapePos[0][1]-1;
+                  
+                    //2nd block pos
+                    players[k].shapePos[1][0] = players[k].shapePos[1][0]+1;
+                    players[k].shapePos[1][1] = players[k].shapePos[1][1]-2;
+                  
+                    //3rd block pos
+                    players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                    players[k].shapePos[2][1] = players[k].shapePos[2][1]+1;
+                  
+                    //4th block pos
+                    players[k].shapePos[3][0] = players[k].shapePos[3][0]+1;
+                    players[k].shapePos[3][1] = players[k].shapePos[3][1];
+                  }
+                  
+            updateLeftRightBottomVariables(k);
+            break;
+            
+      case 't': 
+            if(players[k].shapeStage == 0){
+              //1st block pos
+              players[k].shapePos[0][0] = players[k].shapePos[0][0];
+              players[k].shapePos[0][1] = players[k].shapePos[0][1]-1 ;
+                
+              //2nd block pos
+              players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+              players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                
+              //3rd block pos
+              players[k].shapePos[2][0] = players[k].shapePos[2][0]-1;
+              players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+              //4th block pos
+              players[k].shapePos[3][0] = players[k].shapePos[3][0]-1;
+              players[k].shapePos[3][1] = players[k].shapePos[3][1];
+            }   
+            else if(players[k].shapeStage == 1){
+                //1st block pos
+                players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                players[k].shapePos[0][1] = players[k].shapePos[0][1]+1 ;
+                
+                //2nd block pos
+                players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+                players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+                //3rd block pos
+                players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+                //4th block pos
+                players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+              }
+              else if(players[k].shapeStage == 2){ 
+                  //1st block pos
+                  players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                  players[k].shapePos[0][1] = players[k].shapePos[0][1]+1;
+                
+                  //2nd block pos
+                  players[k].shapePos[1][0] = players[k].shapePos[1][0]+2;
+                  players[k].shapePos[1][1] = players[k].shapePos[1][1]-1;
+                
+                  //3rd block pos
+                  players[k].shapePos[2][0] = players[k].shapePos[2][0]+1;
+                  players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+                  //4th block pos
+                  players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                  players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+                }
+                else if(players[k].shapeStage == 3){
+                    //1st block pos
+                    players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                    players[k].shapePos[0][1] = players[k].shapePos[0][1]-1;
+                  
+                    //2nd block pos
+                    players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                    players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                  
+                    //3rd block pos
+                    players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                    players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                  
+                    //4th block pos
+                    players[k].shapePos[3][0] = players[k].shapePos[3][0]+1;
+                    players[k].shapePos[3][1] = players[k].shapePos[3][1]-2;
+                  }
+                  
+            updateLeftRightBottomVariables(k);
+            break;
+            
+      case 'z': 
+            if(players[k].shapeStage == 0){
+              //1st block pos
+              players[k].shapePos[0][0] = players[k].shapePos[0][0];
+              players[k].shapePos[0][1] = players[k].shapePos[0][1]-2 ;
+                
+              //2nd block pos
+              players[k].shapePos[1][0] = players[k].shapePos[1][0]-1;
+              players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                
+              //3rd block pos
+              players[k].shapePos[2][0] = players[k].shapePos[2][0];
+              players[k].shapePos[2][1] = players[k].shapePos[2][1]-1;
+                
+              //4th block pos
+              players[k].shapePos[3][0] = players[k].shapePos[3][0]-1;
+              players[k].shapePos[3][1] = players[k].shapePos[3][1]+1;
+            }
+            
+            else if(players[k].shapeStage == 1){
+                //1st block pos
+                players[k].shapePos[0][0] = players[k].shapePos[0][0]-1;
+                players[k].shapePos[0][1] = players[k].shapePos[0][1]+2 ;
+                
+                //2nd block pos
+                players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                players[k].shapePos[1][1] = players[k].shapePos[1][1];
+                
+                //3rd block pos
+                players[k].shapePos[2][0] = players[k].shapePos[2][0]-1;
+                players[k].shapePos[2][1] = players[k].shapePos[2][1]+1;
+                
+                //4th block pos
+                players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                players[k].shapePos[3][1] = players[k].shapePos[3][1]-1;
+              }
+              else if(players[k].shapeStage == 2){ 
+                  //1st block pos
+                  players[k].shapePos[0][0] = players[k].shapePos[0][0]+1;
+                  players[k].shapePos[0][1] = players[k].shapePos[0][1]-1;
+                
+                  //2nd block pos
+                  players[k].shapePos[1][0] = players[k].shapePos[1][0];
+                  players[k].shapePos[1][1] = players[k].shapePos[1][1]+1;
+                
+                  //3rd block pos
+                  players[k].shapePos[2][0] = players[k].shapePos[2][0]+1;
+                  players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                
+                  //4th block pos
+                  players[k].shapePos[3][0] = players[k].shapePos[3][0];
+                  players[k].shapePos[3][1] = players[k].shapePos[3][1]+2;
+                }
+                else if(players[k].shapeStage == 3){
+                    //1st block pos
+                    players[k].shapePos[0][0] = players[k].shapePos[0][0];
+                    players[k].shapePos[0][1] = players[k].shapePos[0][1]+1;
+                  
+                    //2nd block pos
+                    players[k].shapePos[1][0] = players[k].shapePos[1][0]+1;
+                    players[k].shapePos[1][1] = players[k].shapePos[1][1]-1;
+                  
+                    //3rd block pos
+                    players[k].shapePos[2][0] = players[k].shapePos[2][0];
+                    players[k].shapePos[2][1] = players[k].shapePos[2][1];
+                  
+                    //4th block pos
+                    players[k].shapePos[3][0] = players[k].shapePos[3][0]+1;
+                    players[k].shapePos[3][1] = players[k].shapePos[3][1]-2;
+                  }
+            updateLeftRightBottomVariables(k);
+            break;
+    }
+  }
+  
+  function checkRowCompletion(k){
+    var simultaneousRowsCompleted = 0;
+    var oppo = players[k].opponentID;
+    var rowsCompleted ={};
+	var rName = players[k].myRoom;
+	
+	for(var i=0;i<=players[k].bottomMostX;i++){
+	  for(var j=0;j<gridWidth;j++){
+		if(isOccupied(i,j,k) == false)	break;
+	  }
+	  if(j == gridWidth){
+		simultaneousRowsCompleted++;
+		eraseRow(i,k);
+		dropTetris(i,k); 
+	  }
+	}
+
+	for(var key in rowsCompleted){
+		eraseRow(key,k);
+		dropTetris(key,k);
+	}
+
+	if(simultaneousRowsCompleted!=0){
+		players[k].rowCompletionFlag =true;
+		players[oppo].rowAdditionFlag =true;
+		players[oppo].rowsAddedTimeCountFlag =true;
+	}
+
+	for(var i=0;i<simultaneousRowsCompleted;i++){
+		var emptyRows = 0;
+		var tempData = [];
+		var tempOccupyData = [];
+		for(var j=0;j<gridWidth;j++){
+			if(players[k].backgroundPropertyOfAllBlocks[gridHeight-1][j] == defaultBackgroundColor)
+				emptyRows++;
+			tempData.push(players[k].backgroundPropertyOfAllBlocks[gridHeight-1][j]);
+			tempOccupyData.push(players[k].occupiedPropertiesOfAllBlocks[gridHeight-1][j]);
+		}
+		if(emptyRows == gridWidth){
+			//console.log("No more rows to send to opponents!");
+			break;
+		}
+		addCompletedRowToOpponents(tempData,tempOccupyData,k);
+		eraseRow(gridHeight-1,k);
+		dropTetris(gridHeight-1,k); 
+	}
+		players[oppo].rowsAdded = simultaneousRowsCompleted;
+}
+  
+  //erases the completed row
+  function eraseRow(x,k){
+    for(var z=0;z<gridWidth;z++){
+      updateOccupyPropertyOfBlocks(x,z,0,k);
+      updateBackgroundPropertyOfBlocks(x,z,defaultBackgroundColor,k);
+    }
+  }
+  
+  //drops the rest of tetris just above the completed row 
+  function dropTetris(z,k){
+    for(var y=0;y<gridWidth;y++){
+      for(var l=z-1;l>=0;l--){
+        var temp = l+1;
+        updateOccupyPropertyOfBlocks(temp,y,players[k].occupiedPropertiesOfAllBlocks[l][y],k);
+        updateBackgroundPropertyOfBlocks(temp,y,players[k].backgroundPropertyOfAllBlocks[l][y],k);
+      }
+    }
+  }
+  
+  function addCompletedRowToOpponents(tempData,tempOccupyData,k){
+    var oppo = players[k].opponentID;
+    for(var i=1; i<gridHeight ;i++){
+      for(var j=0;j<gridWidth ;j++){
+        players[oppo].occupiedPropertiesOfAllBlocks[i-1][j] = players[oppo].occupiedPropertiesOfAllBlocks[i][j];
+        players[oppo].backgroundPropertyOfAllBlocks[i-1][j] = players[oppo].backgroundPropertyOfAllBlocks[i][j];  
+      }
+    }
+	placePieceToAppropriatePosition(oppo);
+    //moveShapeUp(oppo);
+    var tt = gridHeight-1;
+    
+    for(var i=0;i<gridWidth ;i++){
+      players[oppo].occupiedPropertiesOfAllBlocks[tt][i] = tempOccupyData[i];
+      players[oppo].backgroundPropertyOfAllBlocks[tt][i] = tempData[i];
+    }
+  }
+  
+  function placePieceToAppropriatePosition(oppo){
+		var k =oppo;
+		if(players[k].shapePos[0][0]-1 < 0 || players[k].shapePos[1][0]-1 < 0 
+		|| players[k].shapePos[2][0]-1 < 0 || players[k].shapePos[3][0]-1 < 0){ 
+			console.log("Piece cant be moved up");
+			if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][players[k].shapePos[0][1]] ==1
+			|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][players[k].shapePos[1][1]] ==1
+			|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][players[k].shapePos[2][1]] ==1
+			|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][players[k].shapePos[3][1]] ==1){
+				console.log("Piece cant be placed same place also........so game over");
+				gameOver(k,false);
+			}
+			else{
+				console.log("Shifting the piece to same place");
+				if(players[k].shapePos[0][0]-1>=0){
+					players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]-1][players[k].shapePos[0][1]-1] =0;
+					players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[0][0]-1][players[k].shapePos[0][1]-1] =defaultBackgroundColor;
+				}
+				
+				if(players[k].shapePos[1][0]-1>=0){
+					players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]-1][players[k].shapePos[1][1]-1] =0;
+					players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[1][0]-1][players[k].shapePos[1][1]-1] =defaultBackgroundColor;
+				}
+				
+				if(players[k].shapePos[2][0]-1>=0){
+					players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]-1][players[k].shapePos[2][1]-1] =0;
+					players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[2][0]-1][players[k].shapePos[2][1]-1] =defaultBackgroundColor;
+				}
+				
+				if(players[k].shapePos[3][0]-1>=0){
+					players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]-1][players[k].shapePos[3][1]-1] =0;
+					players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[3][0]-1][players[k].shapePos[3][1]-1] =defaultBackgroundColor;
+				}
+				
+				players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][players[k].shapePos[0][1]] =1;
+			    players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][players[k].shapePos[1][1]] =1;
+				players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][players[k].shapePos[2][1]] =1;
+				players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][players[k].shapePos[3][1]] =1;
+				
+				players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[0][0]][players[k].shapePos[0][1]] =players[k].anyColor;
+				players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[1][0]][players[k].shapePos[1][1]] =players[k].anyColor;
+				players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[2][0]][players[k].shapePos[2][1]] =players[k].anyColor;
+				players[k].backgroundPropertyOfAllBlocks[players[k].shapePos[3][0]][players[k].shapePos[3][1]] =players[k].anyColor;
+			}	
+		}
+		else{
+			console.log("move shape up");
+			moveShapeUp(k);
+		}
+	}
+  
+  function moveShapeUp(k){
+    players[k].shapePos[0][0]--;
+    players[k].shapePos[1][0]--;
+    players[k].shapePos[2][0]--;
+    players[k].shapePos[3][0]--;
+    
+    updateLeftRightBottomVariables(k);
+  }
+  
+  //drops down the shape
+  function moveShapeDown(k){
+    players[k].shapePos[0][0]++;
+    players[k].shapePos[1][0]++;
+    players[k].shapePos[2][0]++;
+    players[k].shapePos[3][0]++;
+    
+    updateLeftRightBottomVariables(k);
+  }
+  
+  //moves the shape right
+  function moveTheShapeToRight(k){
+    players[k].shapePos[0][1]++;
+    players[k].shapePos[1][1]++;
+    players[k].shapePos[2][1]++;
+    players[k].shapePos[3][1]++;
+    
+    updateLeftRightBottomVariables(k);
+  }
+  
+  //moves the shape left
+  function moveTheShapeToLeft(k){
+    players[k].shapePos[0][1]--;
+    players[k].shapePos[1][1]--;
+    players[k].shapePos[2][1]--;
+    players[k].shapePos[3][1]--;
+    
+    updateLeftRightBottomVariables(k);
+  }
+
+  function checkOccupiedBlock(k){
+    switch(players[k].shapeType){
+      case 'i':
+            if(players[k].shapeStage == 0 || players[k].shapeStage == 2){
+              var x1=players[k].shapePos[0][0]+1;
+              var x2=players[k].shapePos[1][0]+1;
+              var x3=players[k].shapePos[2][0]+1;
+              var x4=players[k].shapePos[3][0]+1;
+            
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[1][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[2][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+
+              return true;
+              else
+                return false;
+            }
+            else if(players[k].shapeStage == 1 || players[k].shapeStage == 3)
+            {
+              var x1=players[k].bottomMostX+1;
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[3][1]]== 1)
+                return true;
+              else
+                return false;
+            }
+            break;
+      
+      case 'j':
+            if(players[k].shapeStage == 0)
+            {
+              var x1=players[k].shapePos[2][0]+1;
+              var x2=players[k].shapePos[3][0]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[2][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var x1= players[k].shapePos[1][0]+1;
+                var x2= players[k].shapePos[2][0]+1;
+                var x3= players[k].shapePos[3][0]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                  return true;
+                else
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var x1= players[k].shapePos[3][0]+1;
+                  var x2= players[k].shapePos[1][0]+1
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[3][1]]==1
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[1][1]]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var x1= players[k].shapePos[0][0]+1;
+                    var x2= players[k].shapePos[1][0]+1;
+                    var x3= players[k].shapePos[3][0]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[1][1]]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                      return true;
+                    else
+                      return false;
+                  }
+            break;
+      
+      case 'l':   
+            if(players[k].shapeStage == 0)
+            {
+              var x1=players[k].shapePos[2][0]+1;
+              var x2=players[k].shapePos[3][0]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[2][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var x1= players[k].shapePos[1][0]+1;
+                var x2= players[k].shapePos[2][0]+1;
+                var x3= players[k].shapePos[3][0]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                  return true;
+                else
+                  return false;
+              }
+              else if(players[k].shapeStage == 2)
+                {
+                  var x1= players[k].shapePos[0][0]+1;
+                  var x2= players[k].shapePos[3][0]+1;
+                  
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                    return true;
+                  else
+                    return false;
+                }
+                else if(players[k].shapeStage == 3)
+                {
+                  var x1= players[k].shapePos[1][0]+1;
+                  var x2= players[k].shapePos[2][0]+1;
+                  var x3= players[k].shapePos[3][0]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                    return true;
+                  else
+                    return false;
+                }
+            break;
+      
+      case 'o': 
+            if(players[k].shapeStage == 0 || players[k].shapeStage == 1 || players[k].shapeStage == 2 || players[k].shapeStage == 3)
+            {
+              var x1=players[k].shapePos[2][0]+1;
+              var x2=players[k].shapePos[3][0]+1;
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[2][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                return true;
+              else 
+                return false;
+            }
+            break;
+      
+      case 's':   
+            if(players[k].shapeStage == 0)
+            {
+              var x1=players[k].shapePos[1][0]+1;
+              var x2=players[k].shapePos[2][0]+1;
+              var x3=players[k].shapePos[3][0]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1
+              || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1)
+              {
+                var x1 = players[k].shapePos[1][0]+1;
+                var x2 = players[k].shapePos[3][0]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2)
+                {
+                  var x1 = players[k].shapePos[1][0]+1;
+                  var x2 = players[k].shapePos[2][0]+1;
+                  var x3 = players[k].shapePos[3][0]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3)
+                  {
+                    var x1 = players[k].shapePos[1][0]+1;
+                    var x2 = players[k].shapePos[3][0]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+            
+      case 't':   
+            if(players[k].shapeStage == 0)
+            {
+              var x1=players[k].shapePos[0][0]+1;
+              var x2=players[k].shapePos[2][0]+1;
+              var x3=players[k].shapePos[3][0]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1
+              || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1)
+              {
+                var x1 = players[k].shapePos[0][0]+1;
+                var x2 = players[k].shapePos[3][0]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2)
+                {
+                  var x1 = players[k].shapePos[1][0]+1;
+                  var x2 = players[k].shapePos[2][0]+1;
+                  var x3 = players[k].shapePos[3][0]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[1][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3)
+                  {
+                    var x1 = players[k].shapePos[2][0]+1;
+                    var x2 = players[k].shapePos[3][0]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[2][1]]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+      
+      case 'z': 
+            if(players[k].shapeStage == 0){
+              var x1=players[k].shapePos[0][0]+1;
+              var x2=players[k].shapePos[2][0]+1;
+              var x3=players[k].shapePos[3][0]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1
+              || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var x1 = players[k].shapePos[2][0]+1;
+                var x2 = players[k].shapePos[3][0]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[2][1]]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2)
+                {
+                  var x1 = players[k].shapePos[0][0]+1;
+                  var x2 = players[k].shapePos[2][0]+1;
+                  var x3 = players[k].shapePos[3][0]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[0][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[2][1]]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[x3][players[k].shapePos[3][1]]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3)
+                  {
+                    var x1 = players[k].shapePos[2][0]+1;
+                    var x2 = players[k].shapePos[3][0]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[x1][players[k].shapePos[2][1]]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[x2][players[k].shapePos[3][1]]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+    }
+  }
+  
+  //controls the shape automatic dropping movement
+  function moveBox(k){
+    var id = k;
+	
+	//gameover condition
+	if((players[id].bottomMostX == 1 || players[id].bottomMostX == 0) && checkOccupiedBlock(id) == true){
+      gameOver(id,false);
+    }
+    else if(players[id].bottomMostX == gridHeight-1 || (checkOccupiedBlock(id)) ==  true){
+			if(players[k].swipedDown == true){
+				dropButtonReleased(k);
+			}
+			selectNextPiece(id);
+			eraseNextShape(id);
+			
+			randomBlockGenerator(id);
+			checkRowCompletion(id);
+			
+			moveShapeToInitialPos(id);
+			moveNextShapeToInitialPos(id);
+			colorNextShape(id); 
+		}
+		else if(checkOccupiedBlock(id) ==  false){
+			  makeBlockUnoccupied(id);
+			  eraseShape(id);
+			  moveShapeDown(id);
+			  makeBlockOccupied(id);
+			  colorTheShape(id);
+			}
+	return true;
+  }
+  
+  //controls the shape right movement
+  function checkRightMovement(k){
+    switch(players[k].shapeType){
+      case 'i':
+            if(players[k].shapeStage == 0 || players[k].shapeStage == 2)
+            {
+              var y1=players[k].shapePos[3][1]+1;
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y1]== 1)
+                return true;
+              else
+                return false;
+            }
+            else if(players[k].shapeStage == 1 || players[k].shapeStage == 3)
+              {
+                var y1=players[k].shapePos[0][1]+1;
+                var y2=players[k].shapePos[1][1]+1;
+                var y3=players[k].shapePos[2][1]+1;
+                var y4=players[k].shapePos[3][1]+1;
+            
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y3]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y4]==1)
+                  return true;
+                else
+                  return false;
+              }
+            break;
+      
+      case 'j':
+            if(players[k].shapeStage == 0)
+            {
+              var y1=players[k].shapePos[0][1]+1;
+              var y2=players[k].shapePos[1][1]+1;
+              var y3=players[k].shapePos[2][1]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y3]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1)
+              {
+                var y1= players[k].shapePos[0][1]+1;
+                var y2= players[k].shapePos[3][1]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                  return true;
+                else
+                  return false;
+              }
+              else if(players[k].shapeStage == 2)
+                {
+                  var y1= players[k].shapePos[1][1]+1;
+                  var y2= players[k].shapePos[2][1]+1;
+                  var y3= players[k].shapePos[3][1]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1= players[k].shapePos[2][1]+1;
+                    var y2= players[k].shapePos[3][1]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                      return true;
+                    else
+                      return false;
+                  }
+            break;
+      
+      case 'l':   
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[0][1]+1;
+              var y2=players[k].shapePos[1][1]+1;
+              var y3=players[k].shapePos[3][1]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1= players[k].shapePos[2][1]+1;
+                var y2= players[k].shapePos[3][1]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1 )
+                  return true;
+                else
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1= players[k].shapePos[1][1]+1;
+                  var y2= players[k].shapePos[2][1]+1;
+                  var y3= players[k].shapePos[3][1]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                    return true;
+                  else
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                  var y1= players[k].shapePos[0][1]+1;
+                  var y2= players[k].shapePos[3][1]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1 )
+                    return true;
+                  else
+                    return false;
+                }
+            break;
+      
+      case 'o': 
+            if(players[k].shapeStage == 0 || players[k].shapeStage == 1 || players[k].shapeStage == 2 || players[k].shapeStage == 3){
+              var y1=players[k].shapePos[1][1]+1;
+              var y2=players[k].shapePos[2][1]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1)
+                return true;
+              else
+                return false;
+            }
+            break;
+      
+      case 's':   
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[1][1]+1;
+              var y2=players[k].shapePos[3][1]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                return true;
+              else
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1 = players[k].shapePos[0][1]+1;
+                var y2 = players[k].shapePos[2][1]+1;
+                var y3 = players[k].shapePos[3][1]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1 = players[k].shapePos[1][1]+1;
+                  var y2 = players[k].shapePos[3][1]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1 = players[k].shapePos[0][1]+1;
+                    var y2 = players[k].shapePos[2][1]+1;
+                    var y3 = players[k].shapePos[3][1]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+            
+      case 't':   
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[2][1]+1;
+              var y2=players[k].shapePos[3][1]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1 = players[k].shapePos[1][1]+1;
+                var y2 = players[k].shapePos[2][1]+1;
+                var y3 = players[k].shapePos[3][1]+1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1 = players[k].shapePos[0][1]+1;
+                  var y2 = players[k].shapePos[3][1]+1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1 = players[k].shapePos[0][1]+1;
+                    var y2 = players[k].shapePos[2][1]+1;
+                    var y3 = players[k].shapePos[3][1]+1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+      
+      case 'z': 
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[1][1]+1;
+              var y2=players[k].shapePos[3][1]+1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1)
+				 {
+					var y1 = players[k].shapePos[0][1]+1;
+					var y2 = players[k].shapePos[2][1]+1;
+					var y3 = players[k].shapePos[3][1]+1;
+					
+					if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+					|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+					|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+					  return true;
+					else 
+					  return false;
+				 }
+				  else if(players[k].shapeStage == 2){
+						  var y1 = players[k].shapePos[1][1]+1;
+						  var y2 = players[k].shapePos[3][1]+1;
+						  
+						  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y1]==1 
+						  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+							return true;
+						  else 
+							return false;
+						}
+						else if(players[k].shapeStage == 3)
+								{
+									var y1 = players[k].shapePos[0][1]+1;
+									var y2 = players[k].shapePos[2][1]+1;
+									var y3 = players[k].shapePos[3][1]+1;
+									
+									if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+									|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+									|| players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+									  return true;
+									else 
+									  return false;
+								}
+            break;
+    }
+  }
+  
+  function checkLeftMovement(k){   
+    switch(players[k].shapeType){
+      case 'i':
+            if(players[k].shapeStage == 0 || players[k].shapeStage == 2){
+              var y1=players[k].shapePos[0][1]-1;
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]== 1)
+                return true;
+              else
+                return false;
+            }
+            else if(players[k].shapeStage == 1 || players[k].shapeStage == 3){
+                var y1=players[k].shapePos[0][1]-1;
+                var y2=players[k].shapePos[1][1]-1;
+                var y3=players[k].shapePos[2][1]-1;
+                var y4=players[k].shapePos[3][1]-1;
+            
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y3]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y4]==1)
+                  return true;
+                else
+                  return false;
+              }
+            break;
+      
+      case 'j':
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[0][1]-1;
+              var y2=players[k].shapePos[1][1]-1;
+              var y3=players[k].shapePos[3][1]-1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1= players[k].shapePos[0][1]-1;
+                var y2= players[k].shapePos[1][1]-1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1)
+                  return true;
+                else
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1= players[k].shapePos[0][1]-1;
+                  var y2= players[k].shapePos[2][1]-1;
+                  var y3= players[k].shapePos[3][1]-1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1= players[k].shapePos[0][1]-1;
+                    var y2= players[k].shapePos[3][1]-1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                      return true;
+                    else
+                      return false;
+                  }
+            break;
+      
+      case 'l':   
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[0][1]-1;
+              var y2=players[k].shapePos[1][1]-1;
+              var y3=players[k].shapePos[2][1]-1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y3]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1= players[k].shapePos[0][1]-1;
+                var y2= players[k].shapePos[3][1]-1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1 )
+                  return true;
+                else
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1= players[k].shapePos[0][1]-1;
+                  var y2= players[k].shapePos[2][1]-1;
+                  var y3= players[k].shapePos[3][1]-1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                    return true;
+                  else
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                  var y1= players[k].shapePos[0][1]-1;
+                  var y2= players[k].shapePos[1][1]-1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1 )
+                    return true;
+                  else
+                    return false;
+                }
+            break;
+      case 'o': 
+            if(players[k].shapeStage == 0 || players[k].shapeStage == 1 || players[k].shapeStage == 2 || players[k].shapeStage == 3){
+              var y1=players[k].shapePos[0][1]-1;
+              var y2=players[k].shapePos[3][1]-1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                return true;
+              else 
+                return false;
+            }
+            break;
+      
+      case 's':   
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[0][1]-1;
+              var y2=players[k].shapePos[2][1]-1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1 = players[k].shapePos[0][1]-1;
+                var y2 = players[k].shapePos[1][1]-1;
+                var y3 = players[k].shapePos[3][1]-1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1 = players[k].shapePos[0][1]-1;
+                  var y2 = players[k].shapePos[2][1]-1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1 )
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1 = players[k].shapePos[0][1]-1;
+                    var y2 = players[k].shapePos[1][1]-1;
+                    var y3 = players[k].shapePos[3][1]-1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+            
+      case 't':   
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[0][1]-1;
+              var y2=players[k].shapePos[3][1]-1;
+                
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y2]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1 = players[k].shapePos[0][1]-1;
+                var y2 = players[k].shapePos[1][1]-1;
+                var y3 = players[k].shapePos[3][1]-1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1 = players[k].shapePos[0][1]-1;
+                  var y2 = players[k].shapePos[1][1]-1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1 = players[k].shapePos[0][1]-1;
+                    var y2 = players[k].shapePos[1][1]-1;
+                    var y3 = players[k].shapePos[3][1]-1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+      
+      case 'z': 
+            if(players[k].shapeStage == 0){
+              var y1=players[k].shapePos[0][1]-1;
+              var y2=players[k].shapePos[2][1]-1;
+              if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+              || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1)
+                return true;
+              else 
+                return false;
+            }
+            else if(players[k].shapeStage == 1){
+                var y1 = players[k].shapePos[0][1]-1;
+                var y2 = players[k].shapePos[1][1]-1;
+                var y3 = players[k].shapePos[3][1]-1;
+                
+                if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+                || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                  return true;
+                else 
+                  return false;
+              }
+              else if(players[k].shapeStage == 2){
+                  var y1 = players[k].shapePos[0][1]-1;
+                  var y2 = players[k].shapePos[2][1]-1;
+                  
+                  if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                  || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[2][0]][y2]==1)
+                    return true;
+                  else 
+                    return false;
+                }
+                else if(players[k].shapeStage == 3){
+                    var y1 = players[k].shapePos[0][1]-1;
+                    var y2 = players[k].shapePos[1][1]-1;
+                    var y3 = players[k].shapePos[3][1]-1;
+                    
+                    if(players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[0][0]][y1]==1 
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[1][0]][y2]==1
+                    || players[k].occupiedPropertiesOfAllBlocks[players[k].shapePos[3][0]][y3]==1)
+                      return true;
+                    else 
+                      return false;
+                  }
+            break;
+    }
+  }
+  
+  function selectNextPiece(k){
+	players[k].shapeType = players[k].nextPiece;
+	players[k].anyColor = players[k].nextColor;
+  }
+  
+  function rightButton(k){
+    if(players[k].rightMostY == gridWidth-1){
+      allUsers.activeUsers[k].emit('illegal move',true);//illegal move sound play //alert("No more room for moving right!");
+    }
+    else if(checkRightMovement(k) == true){
+        allUsers.activeUsers[k].emit('illegal move',true);//illegal sound play //console.log("checkRightMovement() == true");
+      }
+      else{
+        makeBlockUnoccupied(k);
+        eraseShape(k);
+        moveTheShapeToRight(k);
+        colorTheShape(k);
+        makeBlockOccupied(k);
+      }
+  }
+  
+  //controls the shape left movement
+  function leftButton(k){
+    if(players[k].leftMostY == 0){
+      allUsers.activeUsers[k].emit('illegal move',true);//illegal move sound play //alert("No more room for moving left!");
+    }
+    else if(checkLeftMovement(k) ==  true){
+        allUsers.activeUsers[k].emit('illegal move',true);//illegal move sound play
+      }
+      else{
+        makeBlockUnoccupied(k);
+        eraseShape(k);
+        moveTheShapeToLeft(k);
+        colorTheShape(k);
+        makeBlockOccupied(k);
+      }
+  }
+  
+  //function of drop button when players[k].pressed
+  function dropButtonPressed(k){
+    var id = k;
+	players[id].dropTimerVar = setInterval( function() 
+    {if (Object.keys(allUsers.activeUsers).indexOf(id)>-1) moveBox(id); }, 50);
+  }
+  
+  //function of drop button when released
+  function dropButtonReleased(k){
+    var idd = k;
+	players[k].swipedDown = false;
+    clearInterval(players[idd].dropTimerVar);
+  }
+  
+  function stopTheGameTimer(rmName){
+    var rName = rmName;
+    var timeVar = allGames.activeGames[rName].gameTimer;
+    clearInterval(allGames.activeGames[rName].gameTimer);
+  }
+  
+  //rotates the current shape to next rotation stage
+  function rotateButton(k){
+    storeCurrentPos(k);
+    makeBlockUnoccupied(k);
+    players[k].shapeStage = (players[k].shapeStage+1)%4;
+        
+    moveShapeToNextRotationStage(k);
+        
+    if(isRotationValid(k) == true){
+      updateOccupyPropertyOfBlocks(players[k].cachePos[0][0],players[k].cachePos[0][1],0,k);
+      updateOccupyPropertyOfBlocks(players[k].cachePos[1][0],players[k].cachePos[1][1],0,k);
+      updateOccupyPropertyOfBlocks(players[k].cachePos[2][0],players[k].cachePos[2][1],0,k);
+      updateOccupyPropertyOfBlocks(players[k].cachePos[3][0],players[k].cachePos[3][1],0,k);
+      
+	  //Update color property of new blocks
+      updateBackgroundPropertyOfBlocks(players[k].cachePos[0][0],players[k].cachePos[0][1],defaultBackgroundColor,k);
+      updateBackgroundPropertyOfBlocks(players[k].cachePos[1][0],players[k].cachePos[1][1],defaultBackgroundColor,k);
+      updateBackgroundPropertyOfBlocks(players[k].cachePos[2][0],players[k].cachePos[2][1],defaultBackgroundColor,k);
+      updateBackgroundPropertyOfBlocks(players[k].cachePos[3][0],players[k].cachePos[3][1],defaultBackgroundColor,k);
+          
+      colorTheShape(k);
+      makeBlockOccupied(k);
+    } 
+    else{
+	  //illegal move sound play
+	  allUsers.activeUsers[k].emit('illegal move',true);
+      rollBack(k);
+      makeBlockOccupied(k);
+    }
+  }
+  
+  //if rotation is valid then apply rotation
+  //check if rotation is valid
+  function isRotationValid(k){
+    if( isOccupied(players[k].shapePos[0][0],players[k].shapePos[0][1],k) == true ||
+      isOccupied(players[k].shapePos[1][0],players[k].shapePos[1][1],k) == true ||
+      isOccupied(players[k].shapePos[2][0],players[k].shapePos[2][1],k) == true ||
+      isOccupied(players[k].shapePos[3][0],players[k].shapePos[3][1],k) == true ||
+      players[k].leftMostY <0 ||
+      players[k].rightMostY >=gridWidth ||
+      players[k].bottomMostX >=gridHeight)
+      return false;
+    else
+      return true;
+  }
+  
+  function storeCurrentPos(k){
+    players[k].cachePos[0][0] = players[k].shapePos[0][0];
+    players[k].cachePos[0][1] = players[k].shapePos[0][1];
+    
+    players[k].cachePos[1][0] = players[k].shapePos[1][0];
+    players[k].cachePos[1][1] = players[k].shapePos[1][1];
+    
+    players[k].cachePos[2][0] = players[k].shapePos[2][0];
+    players[k].cachePos[2][1] = players[k].shapePos[2][1];
+    
+    players[k].cachePos[3][0] = players[k].shapePos[3][0];
+    players[k].cachePos[3][1] = players[k].shapePos[3][1];
+    
+    players[k].cacheLeftMostX = players[k].leftMostX;
+    players[k].cacheLeftMostY = players[k].leftMostY;
+    
+    players[k].cacheRightMostX = players[k].rightMostX;
+    players[k].cacheRightMostY = players[k].rightMostY;
+    
+    players[k].cacheBottomMostX = players[k].bottomMostX;
+    players[k].cacheBottomMostY = players[k].bottomMostY;
+    
+    players[k].cacheShapeStage = players[k].shapeStage;
+  }
+  
+  function rollBack(k){
+    players[k].shapePos[0][0] = players[k].cachePos[0][0];
+    players[k].shapePos[0][1] = players[k].cachePos[0][1];
+    
+    players[k].shapePos[1][0] = players[k].cachePos[1][0];
+    players[k].shapePos[1][1] = players[k].cachePos[1][1];
+    
+    players[k].shapePos[2][0] = players[k].cachePos[2][0];
+    players[k].shapePos[2][1] = players[k].cachePos[2][1];
+    
+    players[k].shapePos[3][0] = players[k].cachePos[3][0];
+    players[k].shapePos[3][1] = players[k].cachePos[3][1];
+    
+    players[k].leftMostX = players[k].cacheLeftMostX;
+    players[k].leftMostY = players[k].cacheLeftMostY;
+    
+    players[k].rightMostX = players[k].cacheRightMostX;
+    players[k].rightMostY = players[k].cacheRightMostY;
+    
+    players[k].bottomMostX = players[k].cacheBottomMostX;
+    players[k].bottomMostY = players[k].cacheBottomMostY;
+    
+    players[k].shapeStage = players[k].cacheShapeStage;
+  }
+
+  //function to restart game 
+  /*function restartButton(k){
+    resetPlayer(k);
+  }*/
+
+  function clearTheInterval(Inter){
+    clearInterval(Inter);
+  }
+  
+  function clearAllIntervals(theRoom,p1,p2){
+    var isRoom = theRoom;
+    var play1 = p1;
+    var play2 = p2;
+    clearInterval(players[play1].dropTimerVar);
+    clearInterval(players[play2].dropTimerVar);
+    clearInterval(allGames.activeGames[isRoom].milisecRoomClockVar);
+	return 1;
+  }
+  
+  //9 ranks crown being the highest
+  function rank_decider(user,rating){
+    var level_no=1;
+    if(rating>=800 && rating<=900)
+		level_no = 1;
+		else if(rating>=901 && rating<=1000)
+			level_no = 2;
+			else if(rating>=1001 && rating<=1200)
+				level_no = 3;
+				else if(rating>=1201 && rating<=1500)
+					level_no = 4;
+					else if(rating>=1501 && rating<=1700)
+						level_no = 5;
+						else if(rating>=1701 && rating<=2000)
+							level_no = 6;
+							else if(rating>=2001 && rating<=2500)
+								level_no = 7;
+									else if(level_no>=2501 && level_no<=3000)
+										level_no = 8;
+											else level_no = 9;
+	user.Level = level_no;
+    switch(level_no){
+	
+        case 1:
+                user.rank = "Bronze";
+                break;
+		case 2:
+				user.rank = "Silver";
+                break;
+		case 3: 
+                user.rank = "Gold"; 
+                break;   
+        case 4: 
+                user.rank = "Platinum"; 
+                break;     
+        case 5: 
+                user.rank = "Ruby"; 
+                break;   
+		case 6: 
+                user.rank = "Sapphire"; 
+                break;   
+        case 7: 
+                user.rank = "Emerald"; 
+                break;   
+		case 8: 
+                user.rank = "Diamond"; 
+                break;      
+        default: 
+                user.rank = "Crown"; 
+                break;             
+    }
+  }
+
+  
+  //the game is over
+  function gameOver(k,draw){
+    var theID = k;
+	//console.log("game is over: "+theID);
+	var theRoom = players[theID].myRoom;
+	var theSocket = allUsers.activeUsers[theID];
+	var theOpponent = players[theID].opponentID;
+	var theOpponentSocket = allUsers.activeUsers[theOpponent];
+	
+	var winner_rating = elo.newRatingIfWon(parseInt(players[theOpponent].trophy_no),parseInt(players[theID].trophy_no));
+	var winDiff = winner_rating-players[theOpponent].trophy_no;
+	
+	clearInterval(players[theID].mVar);
+	clearInterval(players[theOpponent].mVar);
+	
+	theOpponentSocket.trophy_no = winner_rating;
+	theSocket.trophy_no = players[theID].trophy_no - winDiff;
+	
+	if(draw == false){	
+		players[theID].trophy_no -= winDiff ;
+		if(players[theID].trophy_no < 800) players[theID].trophy_no =800;
+
+		players[theOpponent].trophy_no = winner_rating; 
+		
+		if(winner_rating<800)	winner_rating = 800;
+		Trophy.getUserBydbid(players[theOpponent].username, function(err, user){
+			if(err) throw err;
+			if(user){
+					//console.log("winner rating of won user:  "+winner_rating);
+					user.trophies = winner_rating;
+					rank_decider(user,winner_rating);
+					user.save();
+				}
+			else    console.log("could not update trophies");
+		});
+		
+		Trophy.getUserBydbid(players[theID].username,function(err, user){
+			if(err) throw err;
+			if(user){
+					  //console.log("winner rating of lost user:  "+players[theID].trophy_no);
+					  user.trophies = players[theID].trophy_no;
+					  rank_decider(user,players[theID].trophy_no);				  
+					  user.save();
+				}
+			else	console.log("could not update trophies");
+		});
+		// my code ends
+	}
+	
+	allGames.noOfGamesPlayed++;
+	
+	players[theID].isMultiplayer =false;
+	players[theOpponent].isMultiplayer =false;
+				
+	if(allUsers.activeUsers[theID]){
+		if(draw == false)
+			allUsers.activeUsers[theID].emit('theGameIsOver',{line:["lost",winDiff]});
+		else 
+			allUsers.activeUsers[theID].emit('theGameIsDraw',true);
+		//add else code here
+		
+		leaveTheRoom(theID);
+		//resetPlayer(theID);
+	}
+	
+	if(allUsers.activeUsers[theOpponent]){
+		if(draw == false)
+			allUsers.activeUsers[theOpponent].emit('theGameIsOver',{line:["won",winDiff]});
+		else 
+			allUsers.activeUsers[theOpponent].emit('theGameIsDraw',true);
+		//add else code here
+		
+		leaveTheRoom(theOpponent);
+		//resetPlayer(theOpponent);
+		
+		var spectateRoom = allGames.activeGames[theRoom].spectatingRoom;
+		//console.log("spectating Room: "+spectateRoom);
+		//to send who won to all spectators
+		io.in(spectateRoom).emit('gameResultForSpectators',players[theOpponent].nameOfUser);
+	} 
+	
+	clearAllIntervals(theRoom,theID,theOpponent);
+	allGames.activeGames[theRoom]={};
+	
+	//players[theID]={};
+	//players[theOpponent]={};
+  }
+  
+  function makingOfGame(k){
+      setOccupyPropertyOfBlocks(k);
+      setBackgroundPropertyOfBlocks(k);
+      setBackgroundPropertyOfNextBlocks(k);
+      
+      randomBlockGenerator(k);
+	  
+      selectNextPiece(k);
+      moveShapeToInitialPos(k);
+      
+	  randomBlockGenerator(k);
+      moveNextShapeToInitialPos(k);
+      colorNextShape(k);
+  }
+  
+  //to check if object is empty
+function isEmpty(obj) {
+    // null and undefined are "empty"
+    if (obj == null) return true;
+
+    // Assume if it has a length property with a non-zero value
+    // that that property is correct.
+    if (obj.length > 0)    return false;
+    if (obj.length === 0)  return true;
+
+    // If it isn't an object at this point
+    // it is empty, but it can't be anything *but* empty
+    // Is it empty?  Depends on your application.
+    if (typeof obj !== "object") return true;
+
+    // Otherwise, does it have any properties of its own?
+    // Note that this doesn't handle
+    // toString and valueOf enumeration bugs in IE < 9
+    for (var key in obj) {
+        if (hasOwnProperty.call(obj, key)) return false;
+    }
+
+    return true;
+}

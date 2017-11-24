@@ -1,0 +1,235 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<title>TETRII</title>
+	<meta name="apple-mobile-web-app-status-bar-style" content="black">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="shortcut icon" href="../../fav.png" /> 	
+	<link rel="stylesheet" href="../style.css"/>
+	<!--<link rel="stylesheet" href="/css/bootstrap.css"/>-->
+	<!--<link rel="stylesheet" href="/css/style.css"/>-->
+	<link rel="stylesheet" href="../animation.css"/>
+	<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+	<script src="/socket.io/socket.io.js"></script>
+	<script src="/jquery.cookie.js"></script>
+	<script type="text/javascript" src="../../manualParallax.js"></script>
+	<script src="../sweetalert.min.js"></script>
+	<link rel="stylesheet" type="text/css" href="../sweetalert.css">
+	<meta charset="utf-8"> 
+	<meta http-equiv="X-UA-Compatible" content="IE=edge" /> 
+	<meta name="viewport" content="width=device-width, initial-scale=1" /> 
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, 
+	minimal-ui"/>
+	
+	<script>
+		//to check for compatible browsers
+		if (navigator.userAgent.indexOf('Firefox') != -1){//Firefox
+			if(parseFloat(navigator.userAgent.substring(navigator.userAgent.indexOf('Firefox') + 8)) < 3.6){
+				console.log("Older firefox");
+				window.location = "../unsupportedPage/unsupported.html";
+			}
+		}else if (navigator.userAgent.indexOf('Chrome') != -1){//Chrome
+				if(parseFloat(navigator.userAgent.substring(navigator.userAgent.indexOf('Chrome') + 7).split(' ')[0]) < 15){
+					console.log("Older chrome");
+					window.location = "../unsupportedPage/unsupported.html";
+				}
+			}else if(navigator.userAgent.indexOf('Safari') != -1 && navigator.userAgent.indexOf('Version') != -1){//Safari
+					//Allow
+					if(parseFloat(navigator.userAgent.substring(navigator.userAgent.indexOf('Version') + 8).split(' ')[0]) < 5){
+						console.log("safari");
+						window.location = "../unsupportedPage/unsupported.html";
+					}
+				}else{//IE
+						var ie = (function () {
+							var undef, v = 3, div = document.createElement('div');
+							while (
+								div.getElementsByTagName('i')[0]
+							);
+							return v > 4 ? v : undef;
+						}());
+						
+						if( ie < 9 ) {
+							// do your stuff, for instance:
+							window.location = "../unsupportedPage/unsupported.html";
+						}
+					}
+		  //to check for compatible browsers close	 
+		  
+		var list = document.getElementsByClassName("header");
+		for (var i = 0; i < list.length; i++) {
+			list[i].style.display="none";
+		}
+			
+		//to set cookie
+		  function setCookie(cname, cvalue, exdays) {
+				//alert("Cookie set on index");
+				var d = new Date();
+				d.setTime(d.getTime() + (exdays*24*60*60*1000));
+				var expires = "expires="+d.toUTCString();
+				document.cookie = cname + "=" + cvalue + "; " + expires;
+		}
+		
+		function getCookie(cname) {
+			var name = cname + "=";
+			var ca = document.cookie.split(';');
+			for(var i = 0; i < ca.length; i++) {
+				var c = ca[i];
+				while (c.charAt(0) == ' ') {
+					c = c.substring(1);
+				}
+				if (c.indexOf(name) == 0) {
+					return c.substring(name.length, c.length);
+				}
+			}
+			return "";
+		}
+	</script>
+</head>
+
+<body onload="init2()" onresize="init2()" id="backkkk">	
+		<div class="splash" id="splash_id">
+			<div class="splash-wrapper" id="login-reg">
+				<div class="logo"><img src="../logo.png"></div>
+		
+					<div class="game-buttons">
+						<button  class="btn btn-green" id="login-btn" >Login</button> 
+						<button  class="btn btn-blue" id="reg-btn">Register</button> 
+						<!--<h3>login with</h3> 
+						<ul>
+						  <li><a href="auth/facebook"><img src="../facebook.png"></a></li>
+						  <li><a href="auth/twitter"><img src="../twitter.png"></a></li>
+						  <li><a href="auth/google"><img src="../google.png"></a></li>
+						</ul>-->        
+					</div>
+			</div>
+    </div>
+	{{{body}}}	
+	<!--Login form-->
+	<div class="login-wrapper" style="display:none;">
+		<h3>login</h3>
+		<div class="login-cancel"><img src="../cancel.png"></div>
+		
+			<!--The forms are submitted to the server via the post methods (currently in users.js file)-->
+			<form method="post" id="loginSubmitForm">
+			  <div>
+				<label>Email</label>
+				<input type="text"  name="email" placeholder="email" id="login_username">
+				<label class="validationFont" id="usernameLoginValidation"></label>
+			  </div>
+			  
+			  <div>
+				<label>Password</label>
+				<input type="password" name="password" placeholder="Password" id="login_password">
+				<label class="validationFont" id="passLoginValidation"></label>
+				<a class="forgetThePass" id="forgetpassword">forgot password?</a>
+			  </div>
+			  
+			  <button class="btn btn-green" id="login-form-btn">Login</button>
+			  
+			</form>
+			<!--</br>-->
+			
+			<h3>Login as a guest</h3>
+
+			<form method="post" id="guestSubmitForm">
+			  <div>
+				<label>Username</label>
+				<input type="text" name="username" id="username_guest" placeholder="Enter a Username" required>
+				<div class="validationFont" id="guestValidationFont"></div>
+			  </div>
+			  <input id="cook" type="hidden" name="password">
+			  <button type="submit" class="btn btn-green" id="login-as-guest-btn">Login</button>
+			</form>
+		</div>
+	</div>
+	
+	<!--registration form-->
+	<div class="reg-wrapper" id="registrationForm" style="display:none;">
+		<h3>Register</h3>
+		<div class="reg-cancel"><img src="../cancel.png"></div>
+			
+		<form method="post" id="registerForm">
+		   <div>
+			<label>Name</label>
+			<input type="text" placeholder="Name" name="name" id="regName">
+			<div class="validationFont" id="nameErr"></div>
+		  </div>
+		  <div>
+			<label>Username</label>
+			<input type="text" placeholder="Username" name="username" id="regUsername">
+			<div class="validationFont" id="usernameErr"></div>
+		  </div>
+		  <div>
+			<label>Email</label>
+			<input type="email" placeholder="Email" name="email" id="regEmail">
+			<div class="validationFont" id="emailErr"></div>
+		  </div>
+		  <div>
+			<label>Password</label>
+			<input type="password" placeholder="Password" name="password" id="regPassword">
+			<div class="validationFont" id="passErr"></div>
+		  </div>
+		  <div>
+			<label>Confirm Password</label>
+			<input type="password" placeholder="Password" name="password2" id="regConfirmPassword">
+			<div class="validationFont" id="confirmPassErr"></div>
+		  </div>
+		  <button class="btn btn-blue" id="reg-form-btn">Register</button>
+		</form>
+	</div>
+
+	<!--forgot password div-->
+	<div class="reg-wrapper" id="forgotPassDiv" style="display:none;">
+		<h3>Reset Password</h3>
+		<div class="reg-cancel"><img src="../cancel.png"></div>
+		<form method="post">
+			<div>
+				<label>Enter Your Registered Email</label>
+				<input type="email" class="form-control" placeholder="Email" name="email" id="resetPassEmail">
+				<div class="validationFont" id="registeredEmailError"></div>
+			</div>
+			<button class="btn btn-blue" id="resetPasswordBtn">Submit</button>
+			<p class="validationFont" id="OTPmsg"> OTP will be send on this email on clicking submit</p>
+		</form>
+		
+	</div>
+
+	<!--New Pass-->
+	<div class="reg-wrapper" id="forgotPassDiv_2" style="display:none;">
+		<h3>Reset Password</h3>
+		{{#if errors}}
+		  {{#each errors}}
+			<div class="alert alert-danger">{{msg}}</div>
+		  {{/each}}
+		{{/if}}
+		<div class="reg-cancel"><img src="../cancel.png"></div>	
+		<form method="post">
+		  <div>
+			  <div>
+				<label>Enter New Password</label>
+				<input type="password" class="form-control" placeholder="Password" name="password" id="newPass">
+				<div class="validationFont" id="newPasserror"></div>
+			  </div>
+			  
+			  <div>
+				<label>Confirm Password</label>
+				<input type="password" class="form-control" placeholder="Password" name="password2" id="confirmNewPass">
+				<div class="validationFont" id="newConfirmPassError"></div>
+			  </div>
+			  
+			  <div>
+				<label>Enter the OTP</label>
+				<input type="text" class="form-control" placeholder="Check Your Mail" name="sentotp" id="newPassOTP">
+				<div class="validationFont" id="OTPerror"></div>
+			  </div>
+		  </div>
+		  <button class="btn btn-blue" id="newPassSubmit">Submit</button>
+		</form>		
+	</div>
+	
+</body>
+</html>

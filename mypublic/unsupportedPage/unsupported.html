@@ -1,0 +1,102 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Browser not supported</title>
+
+<style>
+
+	body {background: #0fa7b2;
+		  width:100%;
+		  height:100%;
+		  margin:0;}
+		  
+	.thanks {text-align: center;
+			max-width: 900px;
+			_width:expression(this.scrollWidth > 900 ? "900px" : "auto"); /* sets max-width for IE6 */  
+			margin: 0 auto;
+			padding-top: 60px;}
+	
+	.upper-half h2 {color: #353535;
+					font-family: sans-serif;
+					font-weight: 100;
+					margin-bottom: 40px;}
+					
+	.upper-half u {color: #0fa7b2;
+    			   font-size: 22px;}
+	
+	.thanks h3 {color: white;
+				font-family: sans-serif;
+				font-weight: 100;
+				margin: 0 20px 50px;
+				font-size: 20px;}
+				
+	.upper-half {text-align: center;
+				background: white;
+				box-shadow: 0 2px 9px #0d6369;
+    -webkit-box-shadow: 0 2px 9px #0b6167;
+    -ms-box-shadow: 0 2px 9px #962B08;
+    -moz-box-shadow: 0 2px 9px #962B08;}
+	
+	.upper-half img {text-align: center;
+					padding: 20px;
+					background:white;
+					border-radius: 5px;
+					margin: 30px 0 0;}
+				
+	
+	.thanks ul {background: white;
+				border-radius: 5px;
+				width: auto;
+				margin: 0 30px 50px;
+				padding: 0;}
+	
+	.thanks ul li {list-style: none;
+					width: 200px;
+    				display:-moz-inline-stack;  /* only for older mozilla browsers */
+					display:inline-block;
+					zoom:1;  /* triggers hasLayout */
+					*display:inline;  /* resets element to inline for IE */}
+	
+	.thanks ul li img {width: 100px;
+						height:100px;
+						margin: 27px 50px 0;
+						cursor: pointer;
+						max-width: 100px;
+						max-height: 100px;
+						border:none;}
+	
+	.thanks ul li a {text-decoration:none;     
+					 color: black;}
+	
+	.thanks ul li label {display: block;
+						font-family: sans-serif;
+						font-size: 13px;
+						font-weight: 600;
+						margin: 7px 0 25px;
+						cursor: pointer;}
+
+</style>
+
+</head>
+
+<body>
+	<div class="wrapper">
+        <div class="upper-half">
+            <img src="images/logo.png" />
+            <h2>Thank you for coming to <u> tete-a-teteris</u></h2><br />
+        </div>
+    </div>
+    
+    <div class="thanks">
+    	<h3>Sorry! We don't support old browsers. Please upgrade your browser to any of these</h3>
+        <ul>
+        	<li><a href="https://www.google.co.in/chrome/browser/desktop/" target="_blank"><img src="images/chrome.jpg" /><label>Chrome</label></a></li>
+            <li><a href="https://www.mozilla.org/en-US/firefox/new/" target="_blank"><img src="images/firefox.jpg" /><label>Firefox</label></a></li>
+            <li><a href="https://www.microsoft.com/en-in/download/Internet-Explorer-11-for-Windows-7-details.aspx" target="_blank"><img src="images/ie.jpg" /><label>IE 9+</label></a></li>
+            <li><a href="http://www.opera.com/download" target="_blank"><img src="images/opera.jpg" /><label>Opera</label></a></li>
+        </ul>
+    </div>
+
+</body>
+</html>

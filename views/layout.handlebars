@@ -1,0 +1,522 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<title>TETRII</title>
+	<meta name="apple-mobile-web-app-status-bar-style" content="black">
+	
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="shortcut icon" href="../../fav.png" /> 	
+	<link rel="stylesheet" href="../style.css"/>
+	<!--<link rel="stylesheet" href="/css/bootstrap.css"/>-->
+	<!--<link rel="stylesheet" href="/css/style.css"/>-->
+	<link rel="stylesheet" href="../animation.css"/>
+	<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+	<script src="/socket.io/socket.io.js"></script>
+	<script src="/jquery.cookie.js"></script>
+	<script type="text/javascript" src="../../manualParallax.js"></script>
+	<script src="../sweetalert.min.js"></script>
+	<link rel="stylesheet" type="text/css" href="../sweetalert.css">
+	<meta charset="utf-8"> 
+	<meta http-equiv="X-UA-Compatible" content="IE=edge" /> 
+	<meta name="viewport" content="width=device-width, initial-scale=1" /> 
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, 
+	minimal-ui"/>
+	
+	<script>
+		//to check for compatible browsers
+		if (navigator.userAgent.indexOf('Firefox') != -1){//Firefox
+			if(parseFloat(navigator.userAgent.substring(navigator.userAgent.indexOf('Firefox') + 8)) < 3.6){
+				console.log("Older firefox");
+				window.location = "../unsupportedPage/unsupported.html";
+			}
+		}else if (navigator.userAgent.indexOf('Chrome') != -1){//Chrome
+				if(parseFloat(navigator.userAgent.substring(navigator.userAgent.indexOf('Chrome') + 7).split(' ')[0]) < 15){
+					console.log("Older chrome");
+					window.location = "../unsupportedPage/unsupported.html";
+				}
+			}else if(navigator.userAgent.indexOf('Safari') != -1 && navigator.userAgent.indexOf('Version') != -1){//Safari
+					//Allow
+					if(parseFloat(navigator.userAgent.substring(navigator.userAgent.indexOf('Version') + 8).split(' ')[0]) < 5){
+						console.log("safari");
+						window.location = "../unsupportedPage/unsupported.html";
+					}
+				}else{//IE
+						var ie = (function () {
+							var undef, v = 3, div = document.createElement('div');
+							while (
+								'[if gt IE '+(++v)+']><i></i><![endif]',
+								div.getElementsByTagName('i')[0]
+							);
+							return v > 4 ? v : undef;
+						}());
+						//if( ie < 9 ) {
+							// do your stuff, for instance:
+							window.location = "../unsupportedPage/unsupported.html";
+						//}
+					}
+		  //to check for compatible browsers close	  
+		
+		$(function(){
+			var cookies = getCookie("idOfUser");
+			if(cookies!=null && cookies!=''){
+				var obj = jQuery.parseJSON(cookies);
+				
+				var db_id = obj.db_id;
+				var token = obj.token;
+				
+				$.ajax({
+					url: '/users/authentication',
+					data: { 
+							db_id: db_id,
+							token:token
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function (res) {
+						//erase old cookie
+						var obj3 = jQuery.parseJSON(res);
+						if(obj3.response){
+							var obj2 = jQuery.parseJSON(cookies);
+							
+							setCookie("idOfUser",cookies,0);
+							var data2={
+											db_id:db_id,
+											token:obj2.token
+										}
+							data2 = JSON.stringify(data2);
+							
+							//create new cookie with new token
+							setCookie("idOfUser",data2,365);
+							window.location = "/index";
+						}
+						else{
+								alert(obj3.details);
+								window.location = "/";
+						}
+					}
+				});
+			}
+			else{
+				$.ajax({
+					url: '/users/authentication',
+					data: { 
+							db_id: '',
+							token:''
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function (res) {
+						console.log("On Cookie not exists");
+						console.log("response from layout to authentication route");
+						var obj = jQuery.parseJSON(res);
+						console.log(obj.response);
+						if(obj.response){
+							console.log("You are not log in login first!");
+							//window.location = "/login";
+						}
+					}
+				});
+			}
+			
+			$("body").on("click","#login-btn",function(){
+				//alert("hello");
+				$(".splash-wrapper").hide();
+				
+				$(".splash-wrapper").attr('display');
+				$(".login-wrapper").show();
+				$("#idOfFacebookPage").hide();
+				//console.log($(".splash-wrapper").css('display'));
+				//console.log($(".login-wrapper").css('display'));
+				$("body").css('overflow','hidden');
+			});
+
+			$("body").on("click",".login-cancel",function(){
+				$(".splash-wrapper").show();
+				$(".login-wrapper").hide();
+				$("body").css('overflow','auto');
+				$("#idOfFacebookPage").show();
+			});
+			
+			$("body").on("click","#reg-btn",function(){
+				$(".splash-wrapper").hide();
+				$("#registrationForm").show();
+				$("#idOfFacebookPage").hide();
+				$("body").css('overflow','hidden');
+				//console.log("reg button clicked");
+			});
+			
+			$("body").on("click",".reg-cancel",function(){			
+				$(".splash-wrapper").show();
+				$(".reg-wrapper").hide();
+				$("body").css('overflow','auto');
+				$("#idOfFacebookPage").show();
+			});
+			
+			$("body").on("click","#login-as-guest-btn",function(){
+				var username= $("#username_guest").val();
+				
+				var pass = $("#cook").val();
+				$.ajax({
+					url: '/users/guest',
+					data: { 
+							user_name: username,
+							password:pass
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function (res) {
+						var obj = jQuery.parseJSON(res);
+						if(obj.response){
+							var data = {
+											db_id:obj.db_id,
+											token:obj.token
+										};
+							data = JSON.stringify(data);
+							setCookie("idOfUser",data,365);
+							window.location = "/index";
+						}
+						else{
+							document.getElementById("guestValidationFont").innerHTML = obj.details;
+							//alert("some problem occured on updating database!");
+						}
+					},
+					error: function(){
+						//console.log("error users guest route");
+						swal({
+							  title: "",
+							  text: "Error In Guest Login!! Try Login Again",
+							  confirmButtonColor: "#DD6B55",
+							  confirmButtonText: "OK",
+							  closeOnConfirm: true,
+							  html: false,
+							  animation: "slide-from-top"
+							});
+					}
+				});
+				return false;
+			});
+			
+			$("body").on("click","#login-form-btn",function(){
+				//console.log("____________login form button clicked");
+				var email = $("#login_username").val();
+				var pass = $("#login_password").val();
+				console.log(email);
+				$.ajax({
+					url:  '/users/login',
+					data: { 
+							email: email,
+							password:pass
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function(res){
+						var obj = jQuery.parseJSON(res);
+						if(obj.response){
+							var data = {
+											db_id:obj.db_id,
+											token:obj.token
+							           }
+							data = JSON.stringify(data);
+							setCookie("idOfUser",data,365);
+							swal({
+							  title: "",
+							  text: "Login Success",
+							  confirmButtonColor: "#DD6B55",
+							  confirmButtonText: "OK",
+							  closeOnConfirm: true,
+							  html: false,
+							  animation: "slide-from-top"
+							}, function(){
+							  window.location = "/index";
+							});
+						}
+						else{
+							var email = obj.data.email.email;
+							var pass = obj.data.password.password;
+							if(email!='' && email != null){
+								document.getElementById("usernameLoginValidation").innerHTML = email;
+							}else{
+								document.getElementById("usernameLoginValidation").innerHTML = '';
+							}
+							if(pass !='' && pass != null){
+								document.getElementById("passLoginValidation").innerHTML = pass;
+							}else{
+								document.getElementById("passLoginValidation").innerHTML = '';
+							}
+							if(obj.details !='' && obj.details !=null){
+								document.getElementById("passLoginValidation").innerHTML = obj.details;
+							}
+						}		
+					},
+					error: function(){
+						//alert("error in users login!! Try Login Again");
+						swal({
+							  title: "",
+							  text: "Error in users login!! Try Login Again",
+							  confirmButtonColor: "#DD6B55",
+							  confirmButtonText: "OK",
+							  closeOnConfirm: true,
+							  html: false,
+							  animation: "slide-from-top"
+							});
+					}
+				});
+				return false;
+			});
+			
+			$("body").on("click","#reg-form-btn",function(){
+				var name = $("#regName").val();
+				var username = $("#regUsername").val();
+				var email = $("#regEmail").val();
+				var pass = $("#regPassword").val();
+				var confirmpass = $("#regConfirmPassword").val();
+				
+				$.ajax({
+					url:  '/users/register',
+					data: { 
+							name: name,
+							username: username,
+							email:email,
+							password:pass,
+							confirmpass:confirmpass
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function(res){
+						//console.log("--------registration success!!!");
+						var obj = jQuery.parseJSON(res);
+						//console.log(obj);
+						if(obj.response){
+							//alert("registration successful");
+							swal({
+							  title: "",
+							  text: "Registration Successful",
+							  confirmButtonColor: "#DD6B55",
+							  confirmButtonText: "OK",
+							  closeOnConfirm: true,
+							  html: false,
+							  animation: "slide-from-top"
+							}, function(){
+							  $("#login-reg").show();
+							  $("#registrationForm").hide();
+							});
+						}
+						else{
+							//alert(obj.details);
+							swal({
+							  title: "",
+							  text: obj.details,
+							  //type: "warning",
+							  //showCancelButton: true,
+							  confirmButtonColor: "#DD6B55",
+							  confirmButtonText: "OK",
+							  closeOnConfirm: true,
+							  html: false,
+							  animation: "slide-from-top"
+							});
+							
+							$("#registrationForm").show();
+								var nameErr = obj.details.name.name;
+								var usernameErr = obj.details.username.username;
+								var emailErr = obj.details.email.email;
+								var passErr = obj.details.password.password;
+								var confirmPassErr = obj.details.password2.password2;
+								var passMatchErr = obj.details.passmatch.passmatch;
+								
+								if(nameErr!=''){
+									$("#nameErr").text(nameErr);
+								}else{
+									$("#nameErr").text('');
+								}
+								if(usernameErr!=''){
+									$("#usernameErr").text(usernameErr);
+								}else{
+									$("#usernameErr").text('');
+								}
+								if(emailErr!=''){
+									$("#emailErr").text(emailErr);
+								}else{
+									$("#emailErr").text('');
+								}
+								
+								if(passErr!=''){
+									$("#passErr").text(passErr);
+								}else{
+									$("#passErr").text('');
+								}
+								if(confirmPassErr!=''){
+									$("#confirmPassErr").text(confirmPassErr);
+								}else{
+									$("#confirmPassErr").text('');
+								}
+								if(passMatchErr!=''){
+									$("#confirmPassErr").text(passMatchErr);
+								}else{
+									$("#confirmPassErr").text('');
+								}
+						}
+					},
+					error: function(){
+						//console.log("error in ajx call users register");
+						swal({
+							  title: "",
+							  text: "Error In Registration Process",
+							  confirmButtonColor: "#DD6B55",
+							  confirmButtonText: "OK",
+							  closeOnConfirm: false,
+							  html: false,
+							  animation: "slide-from-top"
+							});
+					}
+				});
+				return false;
+			});
+	  
+			$("body").on("click","#resetPasswordBtn",function(){
+				//console.log("reset password form submit clicked!");
+				var email = $("#resetPassEmail").val();
+				
+				$.ajax({
+					url:  '/users/resetpassword',
+					data: { 
+							email:email
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function(res){
+						
+						var obj = jQuery.parseJSON(res);
+						//console.log(obj);
+						if(res.response){
+							$("#forgotPassDiv").hide();
+							$("#forgotPassDiv_2").show();
+						}
+						else{
+							//console.log("res.error-------");
+							//console.log(obj.details);
+							document.getElementById("registeredEmailError").innerHTML = obj.details;
+						}
+					},
+					error: function(){
+						//console.log("error in ajax call users resetpassword! Try Again");
+						document.getElementById("registeredEmailError").innerHTML = "error in resetpassword! Try Again";
+					}
+				});
+				return false;
+			});
+			
+			$("body").on("click","#forgetpassword",function(){
+				$(".login-wrapper").hide();
+				$("#forgotPassDiv").show();
+				return false;
+			});
+			
+			$("body").on("click","#newPassSubmit",function(){
+				var pass = $("#newPass").val();
+				var confirmPass = $("#confirmNewPass").val();
+				var OTP = $("#newPassOTP").val();
+				
+				$.ajax({
+					url:  '/users/NewPass',
+					data: { 
+							pass:pass,
+							confirmPass:confirmPass,
+							OTP:OTP
+						  },
+					type: 'POST',
+					traditional: true,
+					success: function(res){
+						var obj = jQuery.parseJSON(res);
+						//console.log(obj);
+						if(res.response){
+							$("#forgotPassDiv_2").hide();
+							$("#login").show();
+						}
+						else{
+							//console.log("res.error-------");
+							//console.log(obj.details);
+							var newPass = obj.error.password.password;
+							var newConfirmPass = obj.error.password2.password2;
+							var OTPerr = obj.error.OTP.OTP;
+							var passMatch = obj.error.passMatch.passMatch;
+							
+							if(newPass!='' && newPass!= null){
+								document.getElementById("newPasserror").innerHTML = newPass;
+							}else{
+								document.getElementById("newPasserror").innerHTML = '';
+							}
+							
+							if(newConfirmPass!='' && newConfirmPass!= null){
+								document.getElementById("newConfirmPassError").innerHTML = newConfirmPass;
+							}else{
+								document.getElementById("newConfirmPassError").innerHTML = '';
+							}
+							
+							if(OTPerr!='' && OTPerr!= null){
+								document.getElementById("OTPerror").innerHTML = OTPerr;
+							}else{
+								document.getElementById("OTPerror").innerHTML = '';
+							}
+							
+							if(passMatch!='' && passMatch!= null){
+								document.getElementById("OTPerror").innerHTML = passMatch;
+							}else{
+								document.getElementById("OTPerror").innerHTML = '';
+							}
+						}
+					},
+					error: function(){
+						console.log("error in ajax call users NewPass! Try Again");
+						document.getElementById("OTPerror").innerHTML = "error in resetpassword! Try Again";
+					}
+				});
+				return false;
+			});
+		})
+		
+		var list = document.getElementsByClassName("header");
+		for (var i = 0; i < list.length; i++) {
+			list[i].style.display="none";
+		}
+			
+		//to set cookie
+		  function setCookie(cname, cvalue, exdays) {
+				//alert("Cookie set on index");
+				var d = new Date();
+				if(exdays != 0)
+				d.setTime(d.getTime() + (exdays*24*60*60*1000));
+				var expires = "expires="+d.toUTCString();
+				document.cookie = cname + "=" + cvalue + "; " + expires;
+		}
+		
+		function getCookie(cname) {
+			var name = cname + "=";
+			var ca = document.cookie.split(';');
+			for(var i = 0; i < ca.length; i++) {
+				var c = ca[i];
+				while (c.charAt(0) == ' ') {
+					c = c.substring(1);
+				}
+				if (c.indexOf(name) == 0) {
+					return c.substring(name.length, c.length);
+				}
+			}
+			return "";
+		}
+	</script>
+</head>	
+</body>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-48395873-32', 'auto');
+  ga('send', 'pageview');
+
+</script>
+</html>
